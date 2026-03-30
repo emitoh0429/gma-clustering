@@ -105,15 +105,34 @@ def optimize():
             days.append(current_day)
         # add the last day if it has scenes
 
-        schedule = [] # FINAL OUTPUT LIST
-        for i, d in enumerate(days):
-            schedule.append([f"Day {i+1}"] + d)
-            # for formatting purposes
+schedule = []
+total_actor_cost = 0
 
-        return jsonify({"schedule": schedule}) # send results to google sheets
+for i, day_scenes in enumerate(days, start=1):
+    day_scene_ids = []
+    day_actors = set()
 
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    for scene in day_scenes:
+        day_scene_ids.append(scene.get('SceneID'))
+
+        actors_raw = scene.get('Actors', '')
+        actors_list = [a.strip() for a in actors_raw.split(',') if a.strip()]
+        day_actors.update(actors_list)
+
+    actor_cost = sum(actor_fees.get(actor, 0) for actor in day_actors)
+    total_actor_cost += actor_cost
+
+    schedule.append({
+        "day": f"Day {i}",
+        "scenes": day_scene_ids,
+        "actors_used": list(day_actors),
+        "actor_cost": actor_cost
+    })
+
+return jsonify({
+    "schedule": schedule,
+    "total_actor_cost": total_actor_cost
+})
 
 
 @app.route('/')
