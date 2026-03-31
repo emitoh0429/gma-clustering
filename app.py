@@ -12,7 +12,7 @@ def optimize():
         scenes = sorted(scenes, key=lambda x: (x.get('Location', ''), x.get('Type', ''), x.get('Actors', '')))
 
         if not scenes:
-            return jsonify({"schedule": []}), 100
+            return jsonify({"schedule": []}), 200
 
         days = []
         current_day = []
