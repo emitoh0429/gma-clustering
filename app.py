@@ -29,7 +29,7 @@ def optimize():
 
         scenes = data.get("scenes", [])
         actor_fees = data.get("actor_fees", {})
-        location_costs = data.get("location_costs", {})
+        location_costs = data.get("location_fees", {})
 
         if not scenes:
             return jsonify({
