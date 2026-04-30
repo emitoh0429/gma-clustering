@@ -1,1 +1,3 @@
 flask
+pulp
+gunicorn
