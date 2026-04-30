@@ -29,7 +29,7 @@ def optimize():
 
         scenes = data.get("scenes", [])
         actor_fees = data.get("actor_fees", {})
-        location_costs = data.get("location_fees", {})
+        location_fees = data.get("location_fees", {})
 
         if not scenes:
             return jsonify({
@@ -134,7 +134,7 @@ def optimize():
             cat="Binary"
         )
 
-        # Objective: minimize actor cost + location cost + day penalty + multi-location penalty
+        # Objective: minimize actor fees + location fees + day penalty + multi-location penalty
         actor_cost = pulp.lpSum(
             float(actor_fees.get(actor, 0)) * A[actor][d]
             for actor in all_actors
@@ -142,7 +142,7 @@ def optimize():
         )
 
         location_cost = pulp.lpSum(
-            float(location_costs.get(loc, 0)) * LOC[loc][d]
+            float(location_fees.get(loc, 0)) * LOC[loc][d]
             for loc in all_locations
             for d in days
         )
@@ -289,7 +289,7 @@ def optimize():
             )
 
             day_location_cost = sum(
-                float(location_costs.get(loc, 0))
+                float(location_fees.get(loc, 0))
                 for loc in day_locations
             )
 
