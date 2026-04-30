@@ -7,7 +7,7 @@ app = Flask(__name__)
 
 # ------------------------------------------------------
 # GLOBAL ERROR HANDLER
-# Makes server errors return JSON instead of HTML
+# Forces errors to return JSON instead of HTML
 # ------------------------------------------------------
 @app.errorhandler(Exception)
 def handle_exception(e):
@@ -40,10 +40,6 @@ def debug():
 # ------------------------------------------------------
 
 def parse_list(value):
-    """
-    Converts comma-separated text into a clean list.
-    Example: "A, B, C" -> ["A", "B", "C"]
-    """
     if value is None:
         return []
 
@@ -55,10 +51,6 @@ def parse_list(value):
 
 
 def normalize_type(value):
-    """
-    Accepts Heavy/Light from CLEANED_SCENES.
-    Anything not explicitly Heavy becomes Light.
-    """
     value = str(value or "").strip().lower()
 
     if value == "heavy":
@@ -68,10 +60,6 @@ def normalize_type(value):
 
 
 def safe_float(value):
-    """
-    Converts fee values to float safely.
-    Blank or invalid values become 0.
-    """
     try:
         return float(value)
     except (TypeError, ValueError):
@@ -79,7 +67,7 @@ def safe_float(value):
 
 
 # ------------------------------------------------------
-# MAIN OPTIMIZER ROUTE
+# MAIN OPTIMIZER
 # ------------------------------------------------------
 
 @app.route("/optimize", methods=["POST"])
@@ -102,18 +90,11 @@ def optimize():
     # ======================================================
     # 1. CLEAN INPUT FROM CLEANED_SCENES
     # ======================================================
-    # Expected scene format from Apps Script:
+    # Expected input per scene:
+    # SceneID | Type | Location | LocationDetail | Actors
     #
-    # {
-    #   "SceneID": "11A",
-    #   "Type": "Heavy",
-    #   "Location": "CHURCH",
-    #   "LocationDetail": "CHURCH- attic",
-    #   "Actors": "A, B"
-    # }
-    #
-    # Location = broad costing/clustering location
-    # LocationDetail = exact oneliner location for output
+    # Location = broad costing location
+    # LocationDetail = exact oneliner/raw location
 
     scenes = []
 
@@ -132,7 +113,7 @@ def optimize():
 
     scene_indices = list(range(len(scenes)))
 
-    # Worst-case assumption: one scene per day
+    # Worst case: one scene per day
     max_days = len(scenes)
     days = list(range(max_days))
 
@@ -217,8 +198,7 @@ def optimize():
     # ======================================================
     # 3. OBJECTIVE FUNCTION
     # ======================================================
-    # Minimize:
-    # actor cost + location cost + small day penalty + small multi-location penalty
+    # Minimize actor cost + location cost + small tie-breaker penalties
 
     actor_cost = pulp.lpSum(
         safe_float(actor_fees.get(actor, 0)) * A[actor][d]
@@ -232,7 +212,6 @@ def optimize():
         for d in days
     )
 
-    # These are small tie-breakers, not actual costs.
     day_penalty = 1 * pulp.lpSum(y[d] for d in days)
     multi_location_penalty = 0.5 * pulp.lpSum(M[d] for d in days)
 
@@ -242,21 +221,17 @@ def optimize():
     # 4. CONSTRAINTS
     # ======================================================
 
-    # Constraint 1:
-    # Each scene must be assigned exactly once.
+    # Constraint 1: each scene is assigned exactly once
     for i in scene_indices:
         model += pulp.lpSum(x[i][d] for d in days) == 1
 
-    # Constraint 2:
-    # If a scene is assigned to a day, that day is used.
+    # Constraint 2: if a scene is assigned, that day is used
     for i in scene_indices:
         for d in days:
             model += x[i][d] <= y[d]
 
-    # Constraint 3:
-    # Actor linking.
-    # If an actor appears in any scene on a day,
-    # the actor is charged once for that day.
+    # Constraint 3: actor linking
+    # If actor appears in a scene on a day, actor is paid once that day
     for actor in all_actors:
         related_scenes = [
             i for i in scene_indices
@@ -271,10 +246,8 @@ def optimize():
                 x[i][d] for i in related_scenes
             )
 
-    # Constraint 4:
-    # Broad location linking.
-    # If multiple detailed locations belong to the same broad Location,
-    # the broad Location is charged only once per day.
+    # Constraint 4: location linking
+    # If broad location appears in a scene on a day, location is paid once that day
     for loc in all_locations:
         related_scenes = [
             i for i in scene_indices
@@ -289,9 +262,7 @@ def optimize():
                 x[i][d] for i in related_scenes
             )
 
-    # Constraint 5:
-    # Multi-location detection.
-    # M[d] = 1 if more than one broad location is used that day.
+    # Constraint 5: detect multi-location days
     if all_locations:
         for d in days:
             loc_count = pulp.lpSum(
@@ -299,17 +270,16 @@ def optimize():
                 for loc in all_locations
             )
 
-            # If M[d] = 0, location count must be <= 1.
+            # If M[d] = 0, loc_count must be <= 1
             model += loc_count <= 1 + (len(all_locations) - 1) * M[d]
 
-            # If M[d] = 1, location count must be at least 2.
+            # If M[d] = 1, loc_count must be at least 2
             model += loc_count >= 2 * M[d]
     else:
         for d in days:
             model += M[d] == 0
 
-    # Constraint 6:
-    # Filming capacity.
+    # Constraint 6: filming capacity
     #
     # Single-location day:
     # Heavy / 4 + Light / 9 <= 1
@@ -331,20 +301,19 @@ def optimize():
             if scenes[i]["Type"] == "Light"
         )
 
-        # If M[d] = 0, single-location capacity applies.
+        # If M[d] = 0, single-location capacity applies
         model += (
             (heavy_count / 4) + (light_count / 9)
             <= 1 + BIG_M * M[d]
         )
 
-        # If M[d] = 1, multi-location capacity applies.
+        # If M[d] = 1, multi-location capacity applies
         model += (
             (heavy_count / 2) + (light_count / 6)
             <= 1 + BIG_M * (1 - M[d])
         )
 
-    # Constraint 7:
-    # Maximum 3 distinct actor groups per day.
+    # Constraint 7: max 3 distinct actor groups per day
     for g_idx, group in enumerate(actor_groups):
         related_scenes = [
             i for i in scene_indices
@@ -365,8 +334,7 @@ def optimize():
             for g_idx in range(len(actor_groups))
         ) <= 3
 
-    # Constraint 8:
-    # Use earlier days first.
+    # Constraint 8: use earlier days first
     for d in range(max_days - 1):
         model += y[d] >= y[d + 1]
 
@@ -385,7 +353,7 @@ def optimize():
         }), 500
 
     # ======================================================
-    # 6. BUILD OUTPUT FOR APPS SCRIPT
+    # 6. BUILD OUTPUT
     # ======================================================
 
     schedule = []
@@ -410,14 +378,12 @@ def optimize():
             for actor in scene["ActorsList"]
         })
 
-        # Broad locations used for costing
         day_locations = sorted({
             scene["Location"]
             for scene in day_scenes
             if scene["Location"]
         })
 
-        # Detailed locations used for readable oneliner output
         day_location_details = sorted({
             scene["LocationDetail"]
             for scene in day_scenes
@@ -444,19 +410,16 @@ def optimize():
         schedule.append({
             "day": day_label,
 
-            # Summary fields
             "scenes": [scene["SceneID"] for scene in day_scenes],
             "actors_used": day_actors,
             "locations_used": day_locations,
             "location_details_used": day_location_details,
             "multi_location_day": len(day_locations) > 1,
 
-            # Cost fields
             "actor_cost": day_actor_cost,
             "location_cost": day_location_cost,
             "day_total_cost": day_total_cost,
 
-            # Readable one-liner field
             "oneliner": (
                 f"{day_label} | "
                 f"Scenes: {', '.join(scene['SceneID'] for scene in day_scenes)} | "
@@ -466,7 +429,6 @@ def optimize():
                 f"Cost: {day_total_cost}"
             ),
 
-            # Scene-level details for production-style output
             "scene_details": [
                 {
                     "SceneID": scene["SceneID"],
