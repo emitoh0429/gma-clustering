@@ -114,6 +114,7 @@ def optimize():
     scene_indices = list(range(len(scenes)))
 
     # Worst case: one scene per day
+    # Do not cap this yet. It ensures the model has enough possible days.
     max_days = len(scenes)
     days = list(range(max_days))
 
@@ -348,8 +349,16 @@ def optimize():
 
     if solver_status not in ["Optimal", "Feasible"]:
         return jsonify({
-            "error": "No feasible schedule found",
-            "solver_status": solver_status
+            "error": f"Solver failed with status: {solver_status}",
+            "solver_status": solver_status,
+            "scene_count": len(scenes),
+            "max_days": max_days,
+            "actor_count": len(all_actors),
+            "location_count": len(all_locations),
+            "actor_group_count": len(actor_groups),
+            "heavy_scene_count": sum(1 for scene in scenes if scene["Type"] == "Heavy"),
+            "light_scene_count": sum(1 for scene in scenes if scene["Type"] == "Light"),
+            "note": "With max_days equal to scene_count, true infeasibility is unlikely. If this status is Not Solved, the solver may be timing out."
         }), 500
 
     # ======================================================
