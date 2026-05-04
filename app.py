@@ -36,9 +36,9 @@ def optimize():
         main_cast = [m.strip() for m in main_cast_raw.split(",") if m.strip()]
 
         # cost parameters -> CONSTANTS
-        actor_cost = {row[0]: row[1] for row in actors}
-        staff_cost = {row[0]: row[1] for row in staff}
-        location_cost = {row[0]: row[1] for row in locations}
+        actor_cost = {row[0]: int(row[1]) for row in actors if row[1]}
+        staff_cost = {row[0]: int(row[1]) for row in staff if row[1]}
+        location_cost = {row[0]: int(row[1]) for row in locations if row[1]}
 
         # MODEL
         model = cp_model.CpModel()
@@ -60,6 +60,15 @@ def optimize():
         # DEPENDENT VARIABLE
         # y_j = 1 if day j has scenes assigned to it
         y = [model.NewBoolVar(f"y_{j}") for j in range(max_days)]
+
+        # time decision variable
+        D = {}
+        N = {}
+
+        for i in range(num_scenes):
+            for j in range(max_days):
+                D[i, j] = model.NewBoolVar(f"D_{i}_{j}")
+                N[i, j] = model.NewBoolVar(f"N_{i}_{j}")
 
         location_list = list(set(scene[3] for scene in scenes if scene[3]))
         actor_list = list(actor_cost.keys())
@@ -92,11 +101,34 @@ def optimize():
         for i in range(num_scenes):
             model.Add(sum(x[i, j] for j in range(max_days)) == 1)
 
+        # each scene needs to be filmed either during the day or night
+        for i in range(num_scenes):
+            for j in range(max_days):
+                model.Add(D[i, j] + N[i, j] == x[i, j])
+
         # defining y_j
         # y_j ≥ x_ij
         for i in range(num_scenes):
             for j in range(max_days):
                 model.Add(x[i, j] <= y[j])
+
+        # FIXED time of day rules from the input
+        for i in range(num_scenes):
+            time = str(scenes[i][2]).upper()
+
+            for j in range(max_days):
+
+                if time == "DAY":
+                    model.Add(D[i, j] == x[i, j])
+                    model.Add(N[i, j] == 0)
+
+                elif time == "NIGHT":
+                    model.Add(N[i, j] == x[i, j])
+                    model.Add(D[i, j] == 0)
+
+                elif "DAY" in time and "NIGHT" in time:
+                    # flexible = can be day or night
+                    model.Add(D[i, j] + N[i, j] == x[i, j])
         
         # number of clusters cannot exceed maximum number of filming days
         # ∑ y_j ≤ MaxDays
@@ -118,8 +150,18 @@ def optimize():
         for j in range(max_days):
             model.Add(
                 sum(
-                    (2 if scenes[i][1] == "Heavy" else 1) *
-                    (1 if str(scenes[i][2]).upper() == "DAY" else 0) * x[i, j]
+                    (2 if scenes[i][1] == "Heavy" else 1) * D[i, j]
+                    for i in range(num_scenes)
+                ) <= DIRECTOR_CAPACITY // 2
+            )
+        
+        # nighttime capacity (0.5DCap)
+        # ∑ (weight_i + Night_i + x_ij) ≤ 0.5 * DCap
+        # (DCap // 2 to remove decimal)
+        for j in range(max_days):
+            model.Add(
+                sum(
+                    (2 if scenes[i][1] == "Heavy" else 1) * N[i, j]
                     for i in range(num_scenes)
                 ) <= DIRECTOR_CAPACITY // 2
             )
@@ -129,23 +171,18 @@ def optimize():
         for i in range(num_scenes):
             loc = str(scenes[i][3]).strip()
 
-            if loc and loc in location_list:   # 🔑 prevents ("", j)
+            if loc and loc in location_list:   # prevents ("", j)
                 for j in range(max_days):
                     model.Add(x[i, j] <= loc_used[loc, j])
 
         # defining dloc and nloc
         for i in range(num_scenes):
             loc = str(scenes[i][3]).strip()
-            time = str(scenes[i][2]).upper()
 
             if loc and loc in location_list:
                 for j in range(max_days):
-
-                    if time == "DAY":
-                        model.Add(x[i, j] <= dloc_used[loc, j])
-
-                    elif time == "NIGHT":
-                        model.Add(x[i, j] <= nloc_used[loc, j])
+                    model.Add(D[i, j] <= dloc_used[loc, j])
+                    model.Add(N[i, j] <= nloc_used[loc, j])
         
         # linking dloc and nloc to location usage
         for p in location_list:
