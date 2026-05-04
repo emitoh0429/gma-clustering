@@ -134,16 +134,6 @@ def optimize():
         # ∑ y_j ≤ MaxDays
         model.Add(sum(y[j] for j in range(max_days)) <= MAX_DAYS)
 
-        # director's capacity for heavy vs light scenes (TOTAL)
-        # ∑ (weight_i * x_ij) ≤ DCap ∀j
-        for j in range(max_days):
-            model.Add(
-                sum(
-                    (2 if scenes[i][1] == "Heavy" else 1) * x[i, j]
-                    for i in range(num_scenes)
-                ) <= DIRECTOR_CAPACITY
-            )
-
         # daytime capacity (0.5DCap)
         # ∑ (weight_i + Day_i + x_ij) ≤ 0.5 * DCap
         # (DCap // 2 to remove decimal)
