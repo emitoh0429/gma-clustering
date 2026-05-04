@@ -56,16 +56,17 @@ def optimize():
         # y_j = 1 if day j has scenes assigned to it
         y = [model.NewBoolVar(f"y_{j}") for j in range(max_days)]
 
-        # loc_pj = 1 if location p will be visited on day j; 0 otherwise
         location_list = list(set(scene[3] for scene in scenes))
+        actor_list = list(actor_cost.keys())
+        staff_list = list(staff_cost.keys())
+
+        # loc_pj = 1 if location p will be visited on day j; 0 otherwise
         loc_used = {(p, j): model.NewBoolVar(f"loc_{p}_{j}") for p in location_list for j in range(max_days)}
 
         # cast_mj = 1 if cast member m is going on day j; 0 otherwise
-        actor_list = list(actor_cost.keys())
         cast_used = {(m, j): model.NewBoolVar(f"cast_{m}_{j}") for m in actor_list for j in range(max_days)}
 
         # staff_qj = 1 if staff/staff group q is needed on day j; 0 otherwise
-        staff_list = list(staff_cost.keys())
         staff_used = {(q, j): model.NewBoolVar(f"staff_{q}_{j}") for q in staff_list for j in range(max_days)}
 
         #  -----------
