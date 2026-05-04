@@ -1,454 +1,195 @@
 from flask import Flask, request, jsonify
 from ortools.sat.python import cp_model
-import re
 
 app = Flask(__name__)
 
-
-# ======================================================
-# HELPERS
-# ======================================================
-
-def split_csv(value):
-    if value is None:
-        return []
-
-    text = str(value).strip()
-    if not text:
-        return []
-
-    return [item.strip() for item in text.split(",") if item.strip()]
-
-
-def normalize_key(value):
-    return str(value or "").strip().upper()
-
-
-def safe_int(value, default):
-    try:
-        return int(float(value))
-    except Exception:
-        return default
-
-
-def scene_weight(scene):
-    scene_type = normalize_key(scene.get("Type"))
-
-    if scene_type == "HEAVY":
-        return 2
-
-    return 1
-
-
-def time_flags(scene):
-    tod = normalize_key(scene.get("TimeOfDay"))
-
-    is_day = tod in ["DAY", "DAY AND NIGHT"]
-    is_night = tod in ["NIGHT", "DAY AND NIGHT"]
-
-    return is_day, is_night
-
-
-def safe_var_name(value):
-    return re.sub(r"[^A-Za-z0-9_]", "_", str(value))
-
-
-# ======================================================
-# OPTIMIZER
-# ======================================================
-
-def optimize_schedule(
-    scenes,
-    actor_fees,
-    staff_fees,
-    location_fees=None,
-    max_days=8,
-    max_scene_weight_per_day=10,
-    max_locations_per_day=2,
-    main_character="",
-    max_solver_seconds=20
-):
-    if location_fees is None:
-        location_fees = {}
-
-    if not scenes:
-        return {
-            "status": "NO_SCENES",
-            "message": "No scenes were provided.",
-            "schedule": []
-        }
-
-    # Clean scene input
-    clean_scenes = []
-
-    for index, scene in enumerate(scenes):
-        scene_id = str(scene.get("SceneID", "")).strip()
-
-        if not scene_id:
-            scene_id = f"SCENE_{index + 1}"
-
-        location = str(scene.get("Location", "")).strip()
-        if not location:
-            location = "UNKNOWN LOCATION"
-
-        actors = split_csv(scene.get("Actors"))
-        staff_needed = split_csv(scene.get("StaffNeeded"))
-
-        is_day, is_night = time_flags(scene)
-
-        clean_scenes.append({
-            "SceneID": scene_id,
-            "Type": str(scene.get("Type", "")).strip(),
-            "TimeOfDay": str(scene.get("TimeOfDay", "")).strip(),
-            "Location": location,
-            "LocationDetail": str(scene.get("LocationDetail", "")).strip(),
-            "Actors": actors,
-            "StaffNeeded": staff_needed,
-            "Weight": scene_weight(scene),
-            "IsDay": is_day,
-            "IsNight": is_night
-        })
-
-    scene_ids = [scene["SceneID"] for scene in clean_scenes]
-    days = list(range(max_days))
-
-    scene_by_id = {
-        scene["SceneID"]: scene
-        for scene in clean_scenes
-    }
-
-    actors = sorted({
-        actor
-        for scene in clean_scenes
-        for actor in scene["Actors"]
-    })
-
-    staff_groups = sorted({
-        staff
-        for scene in clean_scenes
-        for staff in scene["StaffNeeded"]
-    })
-
-    locations = sorted({
-        scene["Location"]
-        for scene in clean_scenes
-    })
-
-    actor_fees_norm = {
-        normalize_key(k): safe_int(v, 0)
-        for k, v in actor_fees.items()
-    }
-
-    staff_fees_norm = {
-        normalize_key(k): safe_int(v, 0)
-        for k, v in staff_fees.items()
-    }
-
-    location_fees_norm = {
-        normalize_key(k): safe_int(v, 0)
-        for k, v in location_fees.items()
-    }
-
-    # ======================================================
-    # MODEL
-    # ======================================================
-
-    model = cp_model.CpModel()
-
-    # x[i,j] = 1 if scene i is assigned to day j
-    x = {}
-
-    for scene_id in scene_ids:
-        for day in days:
-            x[(scene_id, day)] = model.NewBoolVar(
-                f"x_{safe_var_name(scene_id)}_day_{day + 1}"
-            )
-
-    # y[j] = 1 if day j is used
-    day_used = {}
-
-    for day in days:
-        day_used[day] = model.NewBoolVar(f"day_{day + 1}_used")
-
-    # cast_used[m,j] = 1 if actor m is called on day j
-    cast_used = {}
-
-    for actor in actors:
-        for day in days:
-            cast_used[(actor, day)] = model.NewBoolVar(
-                f"cast_{safe_var_name(actor)}_day_{day + 1}"
-            )
-
-    # staff_used[q,j] = 1 if staff group q is called on day j
-    staff_used = {}
-
-    for staff in staff_groups:
-        for day in days:
-            staff_used[(staff, day)] = model.NewBoolVar(
-                f"staff_{safe_var_name(staff)}_day_{day + 1}"
-            )
-
-    # location_used[p,j] = 1 if location p is used on day j
-    location_used = {}
-
-    for location in locations:
-        for day in days:
-            location_used[(location, day)] = model.NewBoolVar(
-                f"loc_{safe_var_name(location)}_day_{day + 1}"
-            )
-
-    # ======================================================
-    # CONSTRAINTS
-    # ======================================================
-
-    # 1. Each scene is assigned exactly once
-    for scene_id in scene_ids:
-        model.AddExactlyOne(x[(scene_id, day)] for day in days)
-
-    # 2. Define used days
-    for scene_id in scene_ids:
-        for day in days:
-            model.Add(day_used[day] >= x[(scene_id, day)])
-
-    # 3. Daily director capacity
-    for day in days:
-        model.Add(
-            sum(
-                scene_by_id[scene_id]["Weight"] * x[(scene_id, day)]
-                for scene_id in scene_ids
-            ) <= max_scene_weight_per_day
-        )
-
-    # 4. Define cast usage
-    for scene_id in scene_ids:
-        scene = scene_by_id[scene_id]
-
-        for actor in scene["Actors"]:
-            for day in days:
-                model.Add(cast_used[(actor, day)] >= x[(scene_id, day)])
-
-    # 5. Define staff usage
-    for scene_id in scene_ids:
-        scene = scene_by_id[scene_id]
-
-        for staff in scene["StaffNeeded"]:
-            for day in days:
-                model.Add(staff_used[(staff, day)] >= x[(scene_id, day)])
-
-    # 6. Define location usage
-    for scene_id in scene_ids:
-        scene = scene_by_id[scene_id]
-        location = scene["Location"]
-
-        for day in days:
-            model.Add(location_used[(location, day)] >= x[(scene_id, day)])
-
-    # 7. Max locations per day
-    for day in days:
-        model.Add(
-            sum(location_used[(location, day)] for location in locations)
-            <= max_locations_per_day
-        )
-
-    # 8. Main character must appear in at least 50% of used days
-    if main_character:
-        matched_main = None
-
-        for actor in actors:
-            if normalize_key(actor) == normalize_key(main_character):
-                matched_main = actor
-                break
-
-        if matched_main:
-            model.Add(
-                2 * sum(cast_used[(matched_main, day)] for day in days)
-                >= sum(day_used[day] for day in days)
-            )
-
-    # ======================================================
-    # OBJECTIVE
-    # ======================================================
-
-    talent_cost = sum(
-        actor_fees_norm.get(normalize_key(actor), 0) * cast_used[(actor, day)]
-        for actor in actors
-        for day in days
-    )
-
-    staff_cost = sum(
-        staff_fees_norm.get(normalize_key(staff), 0) * staff_used[(staff, day)]
-        for staff in staff_groups
-        for day in days
-    )
-
-    location_cost = sum(
-        location_fees_norm.get(normalize_key(location), 0) * location_used[(location, day)]
-        for location in locations
-        for day in days
-    )
-
-    # Small penalty for using extra days, so optimizer does not spread scenes unnecessarily
-    day_penalty = sum(1000 * day_used[day] for day in days)
-
-    model.Minimize(talent_cost + staff_cost + location_cost + day_penalty)
-
-    # ======================================================
-    # SOLVE
-    # ======================================================
-
-    solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = max_solver_seconds
-
-    status = solver.Solve(model)
-
-    if status not in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
-        return {
-            "status": "NO_SOLUTION",
-            "message": "No feasible schedule found. Try increasing MaxDays, DirectorCapacity, or MaxLocationsPerDay.",
-            "schedule": []
-        }
-
-    # ======================================================
-    # OUTPUT
-    # ======================================================
-
-    schedule = []
-
-    for day in days:
-        day_scenes = []
-
-        for scene_id in scene_ids:
-            if solver.Value(x[(scene_id, day)]) == 1:
-                scene = scene_by_id[scene_id]
-
-                day_scenes.append({
-                    "SceneID": scene["SceneID"],
-                    "Type": scene["Type"],
-                    "TimeOfDay": scene["TimeOfDay"],
-                    "Location": scene["Location"],
-                    "LocationDetail": scene["LocationDetail"],
-                    "Actors": ", ".join(scene["Actors"]),
-                    "StaffNeeded": ", ".join(scene["StaffNeeded"]),
-                    "Weight": scene["Weight"]
-                })
-
-        if day_scenes:
-            used_actors = sorted({
-                actor
-                for scene in day_scenes
-                for actor in split_csv(scene["Actors"])
-            })
-
-            used_staff = sorted({
-                staff
-                for scene in day_scenes
-                for staff in split_csv(scene["StaffNeeded"])
-            })
-
-            used_locations = sorted({
-                scene["Location"]
-                for scene in day_scenes
-            })
-
-            day_actor_cost = sum(
-                actor_fees_norm.get(normalize_key(actor), 0)
-                for actor in used_actors
-            )
-
-            day_staff_cost = sum(
-                staff_fees_norm.get(normalize_key(staff), 0)
-                for staff in used_staff
-            )
-
-            day_location_cost = sum(
-                location_fees_norm.get(normalize_key(location), 0)
-                for location in used_locations
-            )
-
-            schedule.append({
-                "Day": day + 1,
-                "Scenes": day_scenes,
-                "SceneCount": len(day_scenes),
-                "TotalWeight": sum(scene["Weight"] for scene in day_scenes),
-                "Locations": ", ".join(used_locations),
-                "Actors": ", ".join(used_actors),
-                "StaffNeeded": ", ".join(used_staff),
-                "TalentCost": day_actor_cost,
-                "StaffCost": day_staff_cost,
-                "LocationCost": day_location_cost,
-                "TotalCost": day_actor_cost + day_staff_cost + day_location_cost
-            })
-
-    return {
-        "status": "OPTIMAL" if status == cp_model.OPTIMAL else "FEASIBLE",
-        "objective_value": solver.ObjectiveValue(),
-        "total_cost": sum(day["TotalCost"] for day in schedule),
-        "parameters_used": {
-            "MaxDays": max_days,
-            "DirectorCapacity": max_scene_weight_per_day,
-            "MaxLocationsPerDay": max_locations_per_day,
-            "MainCharacter": main_character
-        },
-        "schedule": schedule
-    }
-
-
-# ======================================================
-# ROUTES
-# ======================================================
-
-@app.route("/", methods=["GET"])
-def home():
-    return jsonify({
-        "status": "ok",
-        "message": "Scene optimizer is running. Send POST requests to /optimize."
-    })
-
-
-@app.route("/optimize", methods=["GET"])
-def optimize_get():
-    return jsonify({
-        "status": "ok",
-        "message": "Optimizer endpoint is live. Use POST to send scene data."
-    })
-
-
-@app.route("/optimize", methods=["POST"])
+@app.route('/optimize', methods=['POST'])
 def optimize():
     try:
-        data = request.get_json(force=True)
+        # get the data from google sheets
+        data = request.json
 
-        scenes = data.get("scenes", [])
-        actor_fees = data.get("actor_fees", {})
-        staff_fees = data.get("staff_fees", {})
-        location_fees = data.get("location_fees", {})
-        parameters = data.get("parameters", {})
+        scenes_raw = data['scenes']
+        actors_raw = data['actors']
+        staff_raw = data['staff']
+        locations_raw = data['locations']
+        parameter_raw = data['parameter']
 
-        max_days = safe_int(parameters.get("MaxDays"), 8)
-        director_capacity = safe_int(parameters.get("DirectorCapacity"), 10)
-        max_locations_per_day = safe_int(parameters.get("MaxLocationsPerDay"), 2)
-        main_character = str(parameters.get("MainCharacter", "")).strip()
+        # remove headers from the list
+        scenes = scenes_raw[1:]
+        actors = actors_raw[1:]
+        staff = staff_raw[1:]
+        locations = locations_raw[1:]
+        parameter_rows = parameter_raw[1:]
 
-        result = optimize_schedule(
-            scenes=scenes,
-            actor_fees=actor_fees,
-            staff_fees=staff_fees,
-            location_fees=location_fees,
-            max_days=max_days,
-            max_scene_weight_per_day=director_capacity,
-            max_locations_per_day=max_locations_per_day,
-            main_character=main_character
-        )
+        parameter = {row[0]: row[1] for row in parameter_rows}
 
-        return jsonify(result)
+        # parameter safety net (if sheet empty -> use default values)
+        MAX_DAYS = int(parameter.get("MaxDays", 8) or 8)
+        MAX_LOCATIONS = 2
 
+        DIRECTOR_CAPACITY = int(parameter.get("DirectorCapacity", 10) or 10)
+
+        # cost parameters -> CONSTANTS
+        actor_cost = {row[0]: row[1] for row in actors}
+        staff_cost = {row[0]: row[1] for row in staff}
+        location_cost = {row[0]: row[1] for row in locations}
+
+        # MODEL
+        model = cp_model.CpModel()
+
+        num_scenes = len(scenes)
+        max_days = num_scenes #worst case scenario
+
+        #  ------------------
+        #  DECISION VARIABLES
+        #  ------------------
+
+        # INDEPENDENT VARIABLE 
+        # x_ij = 1 if scene i will be clustered on day j; 0 otherwise
+        x = {}
+        for i in range(num_scenes):
+            for j in range(max_days):
+                x[i, j] = model.NewBoolVar(f"x_{i}_{j}")
+
+        # DEPENDENT VARIABLE
+        # y_j = 1 if day j has scenes assigned to it
+        y = [model.NewBoolVar(f"y_{j}") for j in range(max_days)]
+
+        # loc_pj = 1 if location p will be visited on day j; 0 otherwise
+        location_list = list(set(scene[3] for scene in scenes))
+        loc_used = {(p, j): model.NewBoolVar(f"cast_{m}_{j}") for m in actor_list for j in range(max_days)}
+
+        # cast_mj = 1 if cast member m is going on day j; 0 otherwise
+        actor_list = list(actor_cost.keys())
+        cast_used = {(m, j): model.NewBoolVar(f"cast_{m}){j}") for m in actor_list for j in range(max_days)}
+
+        # staff_qj = 1 if staff/staff group q is needed on day j; 0 otherwise
+        staff_list = list(staff_cost.keys())
+        staff_used = {(q, j): model.NewBoolVar(f"staff_{q}_{j}") for q in staff_list for j in range(max_days)}
+
+        #  -----------
+        #  CONSTRAINTS
+        #  -----------
+
+        # each scene must be clustered exactly once
+        # ∑ x_ij = 1
+        for i in range(num_scenes):
+            model.Add(sum(x[i, j] for j in range(max_days)) == 1)
+
+        # defining y_j
+        # y_j ≥ x_ij
+        for i in range(num_scenes):
+            for j in range(max_days):
+                model.Add(x[i, j] <= y[j])
+        
+        # number of clusters cannot exceed maximum number of filming days
+        # ∑ y_j ≤ MaxDays
+        model.Add(sum(y[j] for j in range(max_days)) <= MAX_DAYS)
+
+        # director's capacity for heavy vs light scenes (TOTAL)
+        # ∑ (weight_i * x_ij) ≤ DCap ∀j
+        for j in range(max_days):
+            model.Add(
+                sum(
+                    (2 if scenes[i][1] == "Heavy" else 1) * x[i, j]
+                    for i in range(num_scenes)
+                ) <= DIRECTOR_CAPACITY
+            )
+
+        # daytime capacity (0.5DCap)
+        # ∑ (weight_i + Day_i + x_ij) ≤ 0.5 * DCap
+        # (DCap // 2 to remove decimal)
+        for j in range(max_days):
+            model.Add(
+                sum(
+                    (2 if scenes[i][1] == "Heavy" else 1) *
+                    (1 if str(scenes[i][2]).upper() == "DAY" else 0) * x[i, j]
+                    for i in range(num_scenes)
+                ) <= DIRECTOR_CAPACITY // 2
+            )
+        
+        # defining loc
+        # x_ij ≤ loc_pj
+        for i in range(num_scenes):
+            loc = scenes[i][3]
+            for j in range(max_days):
+                model.Add(x[i, j] <= loc_used[loc, j])
+
+        # max locations per day
+        # ∑ loc_pj ≤ MaxLocationsPerDay
+        for j in range(max_days):
+            model.Add(sum(loc_used[p, j] for p in location_list) <= MAX_LOCATIONS)
+
+        # defining cast
+        # x_ij ≤ cast_mj
+        for i in range(num_scenes):
+            actors_in_scene = str(scenes[i][8]).split(",")
+            for m in actors_in_scene:
+                m = m.strip()
+                for j in range(max_days):
+                    model.Add(x[i, j] <= cast_used[m, j])
+        
+        # defining staff
+        # x_ij ≤ staff_qj
+        for i in range(num_scenes):
+            staff_in_scene = str(scenes[i][6]).split(",")
+            for q in staff_in_scene:
+                q = q.strip()
+                for j in range(max_days):
+                    model.Add(x[i, j] <= staff_used[q, j])
+
+        #  -----------------------------
+        #  OBJECTIVE FUNCTION (MIN COST)
+        #  -----------------------------
+
+        cost_terms = []
+
+        for j in range(max_days):
+            # location costs per day
+            for p in location_list:
+                cost_terms.append(location_cost.get(p, 0) * loc_used[p, j])
+
+            # actor costs per day
+            for m in actor_list:
+                cost_terms.append(actor_cost.get(m, 0) * cast_used[m, j])
+
+            # staff cost per day
+            for q in staff_list:
+                cost_terms.append(staff_cost.get(q, 0) * staff_used[q, j])
+        
+        model.Minimize(sum(cost_terms))
+
+        #  ------
+        #  SOLVER
+        #  ------
+
+        solver = cp_model.CpSolver()
+        solver.parameters.max_time_in_seconds = 10
+        solver.Solve(model)
+
+        #  ------
+        #  OUTPUT
+        #  ------
+
+        schedule = []
+
+        for j in range(max_days):
+            if solver.Value(y[j]) == 1:
+                day_scenes = []
+                for i in range(num_scenes):
+                    if solver.Value(x[i, j]) == 1:
+                        day_scenes.append(scenes[i][0])
+                schedule.append([f"Day {len(schedule)+1}"] + day_scenes)
+
+        return jsonify({"schedule": schedule})
+    
     except Exception as e:
-        return jsonify({
-            "status": "ERROR",
-            "error": str(e),
-            "error_type": type(e).__name__
-        }), 500
+        return jsonify({"error": str(e)}), 500
 
+@app.route('/')
+def home():
+    return "LP Solver Successfully Running"
 
-if __name__ == "__main__":
-    app.run(debug=True)
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=10000)
