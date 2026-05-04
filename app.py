@@ -264,7 +264,9 @@ def optimize():
             for q in staff_list:
                 cost_terms.append(staff_cost.get(q, 0) * staff_used[q, j])
         
-        model.Minimize(sum(cost_terms))
+        model.Minimize(
+            sum(cost_terms) + 1000 * sum(y[j] for j in range(max_days))
+        )
 
         #  ------
         #  SOLVER
