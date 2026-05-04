@@ -141,6 +141,11 @@ def optimize():
         for j in range(max_days - 1):
             model.Add(y[j] >= y[j + 1])
 
+        for j in range(max_days):
+            model.Add(
+                sum(x[i, j] for i in range(num_scenes)) >= y[j]
+            )
+
         # daytime capacity (0.5DCap)
         # ∑ (weight_i + Day_i + x_ij) ≤ 0.5 * DCap
         # (DCap // 2 to remove decimal)
