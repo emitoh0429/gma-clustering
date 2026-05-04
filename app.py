@@ -113,11 +113,11 @@ def optimize():
         # defining loc
         # x_ij ≤ loc_pj
         for i in range(num_scenes):
-            loc = scenes[i][3]
-            if loc:
-                model.Add(x[i, j] <= loc_used[loc, j])
-            for j in range(max_days):
-                model.Add(x[i, j] <= loc_used[loc, j])
+            loc = str(scenes[i][3]).strip()
+
+            if loc and loc in location_list:   # 🔑 prevents ("", j)
+                for j in range(max_days):
+                    model.Add(x[i, j] <= loc_used[loc, j])
 
         # max locations per day
         # ∑ loc_pj ≤ MaxLocationsPerDay
