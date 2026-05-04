@@ -134,13 +134,8 @@ def optimize():
         # ∑ y_j ≤ MaxDays
         model.Add(sum(y[j] for j in range(max_days)) <= MAX_DAYS)
 
-        model.Add(y[0] == 1) # day 1 IS ALWAYS used
-
         ## consecutive day usage (day 1,2,3... NO GAPS)
         ## i.e. if day 3 has scenes then so must day 1 and 2
-        for j in range(max_days - 1):
-            model.Add(y[j] >= y[j + 1])
-
         for j in range(max_days):
             model.Add(
                 sum(x[i, j] for i in range(num_scenes)) >= y[j]
@@ -285,27 +280,35 @@ def optimize():
 
         schedule = []
 
-        max_len = 0  # track longest row
-
         for j in range(max_days):
-            if solver.Value(y[j]) == 1:
-                day_scenes = []
-                for i in range(num_scenes):
-                    if solver.Value(x[i, j]) == 1:
-                        day_scenes.append(scenes[i][0])
+            day_scenes = []
 
-                row = [f"Day {len(schedule)+1}"] + day_scenes
-                schedule.append(row)
+            for i in range(num_scenes):
+                if solver.Value(x[i, j]) == 1:
+                    day_scenes.append(scenes[i][0])
 
-                if len(row) > max_len:
-                    max_len = len(row)
+        # ONLY ADD DAY IF IT HAS SCENES
+        if day_scenes:
+            schedule.append(day_scenes)
 
-        # PAD ALL ROWS TO SAME LENGTH
-        for row in schedule:
+        # add day labels AFTER filtering
+        formatted_schedule = []
+
+        max_len = 0
+
+        for idx, scenes_list in enumerate(schedule):
+            row = [f"Day {idx + 1}"] + scenes_list
+            formatted_schedule.append(row)
+
+            if len(row) > max_len:
+                max_len = len(row)
+
+        # pad rows
+        for row in formatted_schedule:
             while len(row) < max_len:
                 row.append("")
 
-        return jsonify({"schedule": schedule})  
+        return jsonify({"schedule": formatted_schedule})  
     
     except Exception as e:
         return jsonify({"error": str(e)}), 500
