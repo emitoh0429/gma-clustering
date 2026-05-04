@@ -134,6 +134,8 @@ def optimize():
         # ∑ y_j ≤ MaxDays
         model.Add(sum(y[j] for j in range(max_days)) <= MAX_DAYS)
 
+        model.Add(y[0] == 1) # day 1 IS ALWAYS used
+
         ## consecutive day usage (day 1,2,3... NO GAPS)
         ## i.e. if day 3 has scenes then so must day 1 and 2
         for j in range(max_days - 1):
