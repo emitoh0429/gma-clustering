@@ -56,7 +56,7 @@ def optimize():
         # y_j = 1 if day j has scenes assigned to it
         y = [model.NewBoolVar(f"y_{j}") for j in range(max_days)]
 
-        location_list = list(set(scene[3] for scene in scenes if scene[3]))        
+        location_list = list(set(scene[3] for scene in scenes if scene[3]))
         actor_list = list(actor_cost.keys())
         staff_list = list(staff_cost.keys())
 
@@ -114,6 +114,8 @@ def optimize():
         # x_ij ≤ loc_pj
         for i in range(num_scenes):
             loc = scenes[i][3]
+            if loc:
+                model.Add(x[i, j] <= loc_used[loc, j])
             for j in range(max_days):
                 model.Add(x[i, j] <= loc_used[loc, j])
 
