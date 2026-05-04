@@ -1,247 +1,484 @@
 from flask import Flask, request, jsonify
-import pulp
+from ortools.sat.python import cp_model
+import re
 
 app = Flask(__name__)
 
 
-@app.route("/")
+# ======================================================
+# HELPERS
+# ======================================================
+
+def split_csv(value):
+    if value is None:
+        return []
+
+    text = str(value).strip()
+    if not text:
+        return []
+
+    return [item.strip() for item in text.split(",") if item.strip()]
+
+
+def normalize_key(value):
+    return str(value or "").strip().upper()
+
+
+def safe_int(value, default=0):
+    try:
+        cleaned = str(value).replace(",", "").replace("₱", "").replace("$", "").strip()
+        if cleaned == "":
+            return default
+        return int(float(cleaned))
+    except Exception:
+        return default
+
+
+def safe_var_name(value):
+    return re.sub(r"[^A-Za-z0-9_]", "_", str(value))
+
+
+def scene_weight(scene):
+    scene_type = normalize_key(scene.get("Type"))
+
+    if scene_type == "HEAVY":
+        return 2
+
+    return 1
+
+
+def is_day_scene(scene):
+    tod = normalize_key(scene.get("TimeOfDay"))
+    return tod in ["DAY", "DAY AND NIGHT"]
+
+
+def is_night_scene(scene):
+    tod = normalize_key(scene.get("TimeOfDay"))
+    return tod in ["NIGHT", "DAY AND NIGHT"]
+
+
+# ======================================================
+# OPTIMIZER
+# ======================================================
+
+def optimize_schedule(
+    scenes,
+    actor_fees,
+    staff_fees,
+    location_fees=None,
+    max_days=8,
+    director_capacity=10,
+    max_locations_per_day=2,
+    main_character="",
+    max_solver_seconds=20
+):
+    if location_fees is None:
+        location_fees = {}
+
+    if not scenes:
+        return {
+            "status": "NO_SCENES",
+            "message": "No scenes received.",
+            "schedule": []
+        }
+
+    # Normalize fees
+    actor_cost = {
+        normalize_key(name): safe_int(fee, 0)
+        for name, fee in actor_fees.items()
+        if str(name).strip()
+    }
+
+    staff_cost = {
+        normalize_key(name): safe_int(fee, 0)
+        for name, fee in staff_fees.items()
+        if str(name).strip()
+    }
+
+    location_cost = {
+        normalize_key(name): safe_int(fee, 0)
+        for name, fee in location_fees.items()
+        if str(name).strip()
+    }
+
+    # Clean scenes
+    clean_scenes = []
+
+    for idx, scene in enumerate(scenes):
+        scene_id = str(scene.get("SceneID", "")).strip()
+        if not scene_id:
+            scene_id = f"SCENE_{idx + 1}"
+
+        location = str(scene.get("Location", "")).strip()
+        if not location:
+            location = "UNKNOWN LOCATION"
+
+        actors = split_csv(scene.get("Actors"))
+        staff_needed = split_csv(scene.get("StaffNeeded"))
+
+        clean_scenes.append({
+            "SceneID": scene_id,
+            "Type": str(scene.get("Type", "")).strip(),
+            "TimeOfDay": str(scene.get("TimeOfDay", "")).strip(),
+            "Location": location,
+            "LocationDetail": str(scene.get("LocationDetail", "")).strip(),
+            "Actors": actors,
+            "StaffNeeded": staff_needed,
+            "Weight": scene_weight(scene),
+            "IsDay": is_day_scene(scene),
+            "IsNight": is_night_scene(scene)
+        })
+
+    scene_ids = [scene["SceneID"] for scene in clean_scenes]
+    scene_by_id = {scene["SceneID"]: scene for scene in clean_scenes}
+
+    days = list(range(max_days))
+
+    actors = sorted({
+        actor
+        for scene in clean_scenes
+        for actor in scene["Actors"]
+        if actor
+    })
+
+    staff_groups = sorted({
+        staff
+        for scene in clean_scenes
+        for staff in scene["StaffNeeded"]
+        if staff
+    })
+
+    locations = sorted({
+        scene["Location"]
+        for scene in clean_scenes
+        if scene["Location"]
+    })
+
+    # ======================================================
+    # MODEL
+    # ======================================================
+
+    model = cp_model.CpModel()
+
+    # x[i,j] = 1 if scene i is assigned to day j
+    x = {}
+    for scene_id in scene_ids:
+        for day in days:
+            x[(scene_id, day)] = model.NewBoolVar(
+                f"x_{safe_var_name(scene_id)}_day_{day + 1}"
+            )
+
+    # y[j] = 1 if day j is used
+    day_used = {}
+    for day in days:
+        day_used[day] = model.NewBoolVar(f"day_{day + 1}_used")
+
+    # cast_used[m,j] = 1 if actor m is needed on day j
+    cast_used = {}
+    for actor in actors:
+        for day in days:
+            cast_used[(actor, day)] = model.NewBoolVar(
+                f"cast_{safe_var_name(actor)}_day_{day + 1}"
+            )
+
+    # staff_used[q,j] = 1 if staff q is needed on day j
+    staff_used = {}
+    for staff in staff_groups:
+        for day in days:
+            staff_used[(staff, day)] = model.NewBoolVar(
+                f"staff_{safe_var_name(staff)}_day_{day + 1}"
+            )
+
+    # location_used[p,j] = 1 if location p is used on day j
+    location_used = {}
+    for location in locations:
+        for day in days:
+            location_used[(location, day)] = model.NewBoolVar(
+                f"loc_{safe_var_name(location)}_day_{day + 1}"
+            )
+
+    # ======================================================
+    # CONSTRAINTS
+    # ======================================================
+
+    # 1. Each scene must be assigned exactly once
+    for scene_id in scene_ids:
+        model.AddExactlyOne(x[(scene_id, day)] for day in days)
+
+    # 2. Define day_used
+    for scene_id in scene_ids:
+        for day in days:
+            model.Add(day_used[day] >= x[(scene_id, day)])
+
+    # 3. Director daily capacity
+    for day in days:
+        model.Add(
+            sum(
+                scene_by_id[scene_id]["Weight"] * x[(scene_id, day)]
+                for scene_id in scene_ids
+            ) <= director_capacity
+        )
+
+    # 4. Daytime workload cap: max 50% of director capacity
+    for day in days:
+        model.Add(
+            sum(
+                scene_by_id[scene_id]["Weight"] * x[(scene_id, day)]
+                for scene_id in scene_ids
+                if scene_by_id[scene_id]["IsDay"]
+            ) <= director_capacity // 2
+        )
+
+    # 5. Nighttime workload cap: max 50% of director capacity
+    for day in days:
+        model.Add(
+            sum(
+                scene_by_id[scene_id]["Weight"] * x[(scene_id, day)]
+                for scene_id in scene_ids
+                if scene_by_id[scene_id]["IsNight"]
+            ) <= director_capacity // 2
+        )
+
+    # 6. Define actor usage
+    for scene_id in scene_ids:
+        scene = scene_by_id[scene_id]
+
+        for actor in scene["Actors"]:
+            if actor not in actors:
+                continue
+
+            for day in days:
+                model.Add(cast_used[(actor, day)] >= x[(scene_id, day)])
+
+    # 7. Define staff usage
+    for scene_id in scene_ids:
+        scene = scene_by_id[scene_id]
+
+        for staff in scene["StaffNeeded"]:
+            if staff not in staff_groups:
+                continue
+
+            for day in days:
+                model.Add(staff_used[(staff, day)] >= x[(scene_id, day)])
+
+    # 8. Define location usage
+    for scene_id in scene_ids:
+        scene = scene_by_id[scene_id]
+        location = scene["Location"]
+
+        if location not in locations:
+            continue
+
+        for day in days:
+            model.Add(location_used[(location, day)] >= x[(scene_id, day)])
+
+    # 9. Max locations per day
+    for day in days:
+        model.Add(
+            sum(location_used[(location, day)] for location in locations)
+            <= max_locations_per_day
+        )
+
+    # 10. Main character must appear in at least 50% of used days
+    if main_character:
+        matched_main = None
+
+        for actor in actors:
+            if normalize_key(actor) == normalize_key(main_character):
+                matched_main = actor
+                break
+
+        if matched_main:
+            model.Add(
+                2 * sum(cast_used[(matched_main, day)] for day in days)
+                >= sum(day_used[day] for day in days)
+            )
+
+    # ======================================================
+    # OBJECTIVE FUNCTION
+    # ======================================================
+
+    talent_cost = sum(
+        actor_cost.get(normalize_key(actor), 0) * cast_used[(actor, day)]
+        for actor in actors
+        for day in days
+    )
+
+    staff_total_cost = sum(
+        staff_cost.get(normalize_key(staff), 0) * staff_used[(staff, day)]
+        for staff in staff_groups
+        for day in days
+    )
+
+    location_total_cost = sum(
+        location_cost.get(normalize_key(location), 0) * location_used[(location, day)]
+        for location in locations
+        for day in days
+    )
+
+    # Small penalty so the solver avoids using unnecessary extra days
+    day_penalty = sum(1000 * day_used[day] for day in days)
+
+    model.Minimize(talent_cost + staff_total_cost + location_total_cost + day_penalty)
+
+    # ======================================================
+    # SOLVE
+    # ======================================================
+
+    solver = cp_model.CpSolver()
+    solver.parameters.max_time_in_seconds = max_solver_seconds
+
+    status = solver.Solve(model)
+
+    if status not in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
+        return {
+            "status": "NO_SOLUTION",
+            "message": "No feasible schedule found. Try increasing MaxDays, DirectorCapacity, or MaxLocationsPerDay.",
+            "schedule": []
+        }
+
+    # ======================================================
+    # OUTPUT
+    # ======================================================
+
+    schedule = []
+
+    for day in days:
+        day_scenes = []
+
+        for scene_id in scene_ids:
+            if solver.Value(x[(scene_id, day)]) == 1:
+                scene = scene_by_id[scene_id]
+
+                day_scenes.append({
+                    "SceneID": scene["SceneID"],
+                    "Type": scene["Type"],
+                    "TimeOfDay": scene["TimeOfDay"],
+                    "Location": scene["Location"],
+                    "LocationDetail": scene["LocationDetail"],
+                    "Actors": ", ".join(scene["Actors"]),
+                    "StaffNeeded": ", ".join(scene["StaffNeeded"]),
+                    "Weight": scene["Weight"]
+                })
+
+        if not day_scenes:
+            continue
+
+        used_actors = sorted({
+            actor
+            for scene in day_scenes
+            for actor in split_csv(scene["Actors"])
+        })
+
+        used_staff = sorted({
+            staff
+            for scene in day_scenes
+            for staff in split_csv(scene["StaffNeeded"])
+        })
+
+        used_locations = sorted({
+            scene["Location"]
+            for scene in day_scenes
+        })
+
+        day_talent_cost = sum(
+            actor_cost.get(normalize_key(actor), 0)
+            for actor in used_actors
+        )
+
+        day_staff_cost = sum(
+            staff_cost.get(normalize_key(staff), 0)
+            for staff in used_staff
+        )
+
+        day_location_cost = sum(
+            location_cost.get(normalize_key(location), 0)
+            for location in used_locations
+        )
+
+        schedule.append({
+            "Day": len(schedule) + 1,
+            "Scenes": day_scenes,
+            "SceneCount": len(day_scenes),
+            "TotalWeight": sum(scene["Weight"] for scene in day_scenes),
+            "Locations": ", ".join(used_locations),
+            "Actors": ", ".join(used_actors),
+            "StaffNeeded": ", ".join(used_staff),
+            "TalentCost": day_talent_cost,
+            "StaffCost": day_staff_cost,
+            "LocationCost": day_location_cost,
+            "TotalCost": day_talent_cost + day_staff_cost + day_location_cost
+        })
+
+    return {
+        "status": "OPTIMAL" if status == cp_model.OPTIMAL else "FEASIBLE",
+        "objective_value": solver.ObjectiveValue(),
+        "total_cost": sum(day["TotalCost"] for day in schedule),
+        "parameters_used": {
+            "MaxDays": max_days,
+            "DirectorCapacity": director_capacity,
+            "MaxLocationsPerDay": max_locations_per_day,
+            "MainCharacter": main_character
+        },
+        "schedule": schedule
+    }
+
+
+# ======================================================
+# ROUTES
+# ======================================================
+
+@app.route("/", methods=["GET"])
 def home():
-    return "Server is running"
+    return jsonify({
+        "status": "ok",
+        "message": "Scene optimizer is running. Send POST requests to /optimize."
+    })
+
+
+@app.route("/optimize", methods=["GET"])
+def optimize_get():
+    return jsonify({
+        "status": "ok",
+        "message": "Optimizer endpoint is live. Use POST to send scene data."
+    })
 
 
 @app.route("/optimize", methods=["POST"])
 def optimize():
     try:
-        data = request.json or {}
+        data = request.get_json(force=True)
 
         scenes = data.get("scenes", [])
         actor_fees = data.get("actor_fees", {})
+        staff_fees = data.get("staff_fees", {})
+        location_fees = data.get("location_fees", {})
+        parameters = data.get("parameters", {})
 
-        if not scenes:
-            return jsonify({
-                "schedule": [],
-                "total_actor_cost": 0
-            }), 200
+        max_days = safe_int(parameters.get("MaxDays"), 8)
+        director_capacity = safe_int(parameters.get("DirectorCapacity"), 10)
+        max_locations_per_day = safe_int(parameters.get("MaxLocationsPerDay"), 2)
+        main_character = str(parameters.get("MainCharacter", "") or "").strip()
 
-        # Clean scene data
-        for i, scene in enumerate(scenes):
-            scene["index"] = i
-            scene["SceneID"] = str(scene.get("SceneID", i + 1))
-            scene["Type"] = scene.get("Type", "Light")
-            scene["Location"] = scene.get("Location", "")
-            scene["ActorsList"] = [
-                a.strip()
-                for a in scene.get("Actors", "").split(",")
-                if a.strip()
-            ]
-
-        scene_indices = list(range(len(scenes)))
-
-        # Upper bound: worst case, one scene per day
-        max_days = len(scenes)
-        days = list(range(max_days))
-
-        all_actors = sorted({
-            actor
-            for scene in scenes
-            for actor in scene["ActorsList"]
-        })
-
-        all_locations = sorted({
-            scene["Location"]
-            for scene in scenes
-            if scene["Location"]
-        })
-
-        # Create model
-        model = pulp.LpProblem("Scene_Scheduling_Optimization", pulp.LpMinimize)
-
-        # x[s,d] = 1 if scene s is assigned to day d
-        x = pulp.LpVariable.dicts(
-            "assign_scene",
-            (scene_indices, days),
-            lowBound=0,
-            upBound=1,
-            cat="Binary"
+        result = optimize_schedule(
+            scenes=scenes,
+            actor_fees=actor_fees,
+            staff_fees=staff_fees,
+            location_fees=location_fees,
+            max_days=max_days,
+            director_capacity=director_capacity,
+            max_locations_per_day=max_locations_per_day,
+            main_character=main_character
         )
 
-        # y[d] = 1 if day d is used
-        y = pulp.LpVariable.dicts(
-            "day_used",
-            days,
-            lowBound=0,
-            upBound=1,
-            cat="Binary"
-        )
-
-        # a[actor,d] = 1 if actor works on day d
-        a = pulp.LpVariable.dicts(
-            "actor_used",
-            (all_actors, days),
-            lowBound=0,
-            upBound=1,
-            cat="Binary"
-        )
-
-        # l[location,d] = 1 if location is used on day d
-        l = pulp.LpVariable.dicts(
-            "location_used",
-            (all_locations, days),
-            lowBound=0,
-            upBound=1,
-            cat="Binary"
-        )
-
-        # m[d] = 1 if day has multiple locations
-        m = pulp.LpVariable.dicts(
-            "multi_location_day",
-            days,
-            lowBound=0,
-            upBound=1,
-            cat="Binary"
-        )
-
-        # Objective: minimize actor cost + small penalty for using more days
-        model += (
-            pulp.lpSum(
-                actor_fees.get(actor, 0) * a[actor][d]
-                for actor in all_actors
-                for d in days
-            )
-            + 1 * pulp.lpSum(y[d] for d in days)
-        )
-
-        # Constraint 1: Each scene assigned to exactly one day
-        for s in scene_indices:
-            model += pulp.lpSum(x[s][d] for d in days) == 1
-
-        # Constraint 2: If scene assigned to day, day is used
-        for s in scene_indices:
-            for d in days:
-                model += x[s][d] <= y[d]
-
-        # Constraint 3: Actor is used if any assigned scene uses that actor
-        for actor in all_actors:
-            for d in days:
-                for s in scene_indices:
-                    if actor in scenes[s]["ActorsList"]:
-                        model += a[actor][d] >= x[s][d]
-
-        # Constraint 4: Max 3 actor-groups per day
-        # This treats the full Actors string as a group, similar to your old code.
-        for d in days:
-            actor_groups = sorted({
-                scene.get("Actors", "")
-                for scene in scenes
-                if scene.get("Actors", "")
-            })
-
-            group_vars = []
-
-            for group in actor_groups:
-                group_var = pulp.LpVariable(
-                    f"group_{group}_day_{d}",
-                    lowBound=0,
-                    upBound=1,
-                    cat="Binary"
-                )
-
-                related_scenes = [
-                    s for s in scene_indices
-                    if scenes[s].get("Actors", "") == group
-                ]
-
-                for s in related_scenes:
-                    model += group_var >= x[s][d]
-
-                group_vars.append(group_var)
-
-            model += pulp.lpSum(group_vars) <= 3
-
-        # Constraint 5: Location usage
-        for loc in all_locations:
-            for d in days:
-                for s in scene_indices:
-                    if scenes[s]["Location"] == loc:
-                        model += l[loc][d] >= x[s][d]
-
-        # Constraint 6: Detect multi-location days
-        # If locations used >= 2, then m[d] must be 1.
-        for d in days:
-            model += pulp.lpSum(l[loc][d] for loc in all_locations) <= 1 + len(all_locations) * m[d]
-
-        # Constraint 7: Heavy and Light scene limits
-        for d in days:
-            heavy_scenes = [
-                s for s in scene_indices
-                if scenes[s]["Type"] == "Heavy"
-            ]
-
-            light_scenes = [
-                s for s in scene_indices
-                if scenes[s]["Type"] != "Heavy"
-            ]
-
-            heavy_count = pulp.lpSum(x[s][d] for s in heavy_scenes)
-            light_count = pulp.lpSum(x[s][d] for s in light_scenes)
-
-            # If single location: Heavy <= 4, Light <= 9
-            # If multi-location: Heavy <= 2, Light <= 6
-            model += heavy_count <= 4 - 2 * m[d]
-            model += light_count <= 9 - 3 * m[d]
-
-        # Constraint 8: Use earlier days first to avoid weird gaps
-        for d in range(max_days - 1):
-            model += y[d] >= y[d + 1]
-
-        # Solve
-        solver = pulp.PULP_CBC_CMD(msg=False, timeLimit=30)
-        result_status = model.solve(solver)
-
-        if pulp.LpStatus[result_status] not in ["Optimal", "Feasible"]:
-            return jsonify({
-                "error": "No feasible schedule found",
-                "status": pulp.LpStatus[result_status]
-            }), 500
-
-        # Build output schedule
-        schedule = []
-        total_cost = 0
-
-        for d in days:
-            if pulp.value(y[d]) < 0.5:
-                continue
-
-            day_scenes = [
-                scenes[s]
-                for s in scene_indices
-                if pulp.value(x[s][d]) > 0.5
-            ]
-
-            day_actors = sorted({
-                actor
-                for scene in day_scenes
-                for actor in scene["ActorsList"]
-            })
-
-            day_cost = sum(actor_fees.get(actor, 0) for actor in day_actors)
-            total_cost += day_cost
-
-            schedule.append({
-                "day": f"Day {len(schedule) + 1}",
-                "scenes": [scene["SceneID"] for scene in day_scenes],
-                "actors_used": day_actors,
-                "actor_cost": day_cost
-            })
-
-        return jsonify({
-            "schedule": schedule,
-            "total_actor_cost": total_cost,
-            "solver_status": pulp.LpStatus[result_status]
-        })
+        return jsonify(result)
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({
+            "status": "ERROR",
+            "error": str(e),
+            "error_type": type(e).__name__
+        }), 500
 
 
 if __name__ == "__main__":
