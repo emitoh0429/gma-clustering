@@ -74,6 +74,9 @@ def optimize():
         # nloc_pj = 1 if location p has at least one NIGHT scene on day j
         nloc_used = {(p, j): model.NewBoolVar(f"nloc_{p}_{j}") for p in location_list for j in range(max_days)}
 
+        # b_pj = 1 if location p has BOTH day AND night scenes on day j
+        both_used = {(p, j): model.NewBoolVar(f"both_{p}_{j}") for p in location_list for j in range(max_days)}
+
         # cast_mj = 1 if cast member m is going on day j; 0 otherwise
         cast_used = {(m, j): model.NewBoolVar(f"cast_{m}_{j}") for m in actor_list for j in range(max_days)}
 
@@ -149,6 +152,22 @@ def optimize():
             for j in range(max_days):
                 model.Add(dloc_used[p, j] <= loc_used[p, j])
                 model.Add(nloc_used[p, j] <= loc_used[p, j])
+
+        # defining b_pj
+        for p in location_list:
+            for j in range(max_days):
+                # if both day and night -> b_pj = 1
+                model.Add(both_used[p, j] <= dloc_used[p, j])
+                model.Add(both_used[p, j] <= nloc_used[p, j])
+
+                # if both are 1 -> b_pj must be 1
+                model.Add(both_used[p, j] >= dloc_used[p, j] + nloc_used[p, j] - 1)
+
+        # only one location in a cluster may have both a scene that requires daytime filming and a scene that requires nighttime filming
+        for j in range(max_days):
+            model.Add(
+                sum(both_used[p, j] for p in location_list) <= 1
+            )
 
         # max locations per day
         # ∑ loc_pj ≤ MaxLocationsPerDay
