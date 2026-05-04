@@ -200,7 +200,7 @@ def optimize():
         # only one location in a cluster may have both a scene that requires daytime filming and a scene that requires nighttime filming
         for j in range(max_days):
             model.Add(
-                sum(both_used[p, j] for p in location_list) <= 1
+                sum(both_used[p, j] for p in location_list) <= 2
             )
 
         # max locations per day
