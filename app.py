@@ -134,6 +134,11 @@ def optimize():
         # ∑ y_j ≤ MaxDays
         model.Add(sum(y[j] for j in range(max_days)) <= MAX_DAYS)
 
+        ## consecutive day usage (day 1,2,3... NO GAPS)
+        ## i.e. if day 3 has scenes then so must day 1 and 2
+        for j in range(max_days - 1):
+            model.Add(y[j] >= y[j + 1])
+
         # daytime capacity (0.5DCap)
         # ∑ (weight_i + Day_i + x_ij) ≤ 0.5 * DCap
         # (DCap // 2 to remove decimal)
