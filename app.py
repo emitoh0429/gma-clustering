@@ -30,6 +30,11 @@ def optimize():
 
         DIRECTOR_CAPACITY = int(parameter.get("DirectorCapacity", 10) or 10)
 
+        main_cast_raw = str(parameter.get("MainCharacter", ""))
+
+        # allow multiple names separated by comma
+        main_cast = [m.strip() for m in main_cast_raw.split(",") if m.strip()]
+
         # cost parameters -> CONSTANTS
         actor_cost = {row[0]: row[1] for row in actors}
         staff_cost = {row[0]: row[1] for row in staff}
@@ -62,6 +67,12 @@ def optimize():
 
         # loc_pj = 1 if location p will be visited on day j; 0 otherwise
         loc_used = {(p, j): model.NewBoolVar(f"loc_{p}_{j}") for p in location_list for j in range(max_days)}
+
+        # dloc_pj = 1 if location p has at least one DAY scene on day j
+        dloc_used = {(p, j): model.NewBoolVar(f"dloc_{p}_{j}") for p in location_list for j in range(max_days)}
+
+        # nloc_pj = 1 if location p has at least one NIGHT scene on day j
+        nloc_used = {(p, j): model.NewBoolVar(f"nloc_{p}_{j}") for p in location_list for j in range(max_days)}
 
         # cast_mj = 1 if cast member m is going on day j; 0 otherwise
         cast_used = {(m, j): model.NewBoolVar(f"cast_{m}_{j}") for m in actor_list for j in range(max_days)}
@@ -119,6 +130,26 @@ def optimize():
                 for j in range(max_days):
                     model.Add(x[i, j] <= loc_used[loc, j])
 
+        # defining dloc and nloc
+        for i in range(num_scenes):
+            loc = str(scenes[i][3]).strip()
+            time = str(scenes[i][2]).upper()
+
+            if loc and loc in location_list:
+                for j in range(max_days):
+
+                    if time == "DAY":
+                        model.Add(x[i, j] <= dloc_used[loc, j])
+
+                    elif time == "NIGHT":
+                        model.Add(x[i, j] <= nloc_used[loc, j])
+        
+        # linking dloc and nloc to location usage
+        for p in location_list:
+            for j in range(max_days):
+                model.Add(dloc_used[p, j] <= loc_used[p, j])
+                model.Add(nloc_used[p, j] <= loc_used[p, j])
+
         # max locations per day
         # ∑ loc_pj ≤ MaxLocationsPerDay
         for j in range(max_days):
@@ -153,6 +184,13 @@ def optimize():
                     if q and q in staff_list:
                         for j in range(max_days):
                             model.Add(x[i, j] <= staff_used[q, j])
+
+        # main cast members need to go on set for at least 50% of all filming days
+        for m in actor_list:
+            if m in main_cast:
+                model.Add(
+                    2 * sum(cast_used[m, j] for j in range(max_days)) >= sum(y[j] for j in range(max_days))
+                )
 
         #  -----------------------------
         #  OBJECTIVE FUNCTION (MIN COST)
