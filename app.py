@@ -189,15 +189,27 @@ def optimize():
 
         schedule = []
 
+        max_len = 0  # track longest row
+
         for j in range(max_days):
             if solver.Value(y[j]) == 1:
                 day_scenes = []
                 for i in range(num_scenes):
                     if solver.Value(x[i, j]) == 1:
                         day_scenes.append(scenes[i][0])
-                schedule.append([f"Day {len(schedule)+1}"] + day_scenes)
 
-        return jsonify({"schedule": schedule})
+                row = [f"Day {len(schedule)+1}"] + day_scenes
+                schedule.append(row)
+
+                if len(row) > max_len:
+                    max_len = len(row)
+
+        # PAD ALL ROWS TO SAME LENGTH
+        for row in schedule:
+            while len(row) < max_len:
+                row.append("")
+
+        return jsonify({"schedule": schedule})  
     
     except Exception as e:
         return jsonify({"error": str(e)}), 500
