@@ -287,13 +287,12 @@ def optimize():
                 if solver.Value(x[i, j]) == 1:
                     day_scenes.append(scenes[i][0])
 
-        # ONLY ADD DAY IF IT HAS SCENES
-        if day_scenes:
-            schedule.append(day_scenes)
+            # MUST BE INSIDE LOOP
+            if day_scenes:
+                schedule.append(day_scenes)
 
         # add day labels AFTER filtering
         formatted_schedule = []
-
         max_len = 0
 
         for idx, scenes_list in enumerate(schedule):
