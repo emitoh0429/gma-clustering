@@ -127,20 +127,32 @@ def optimize():
         # defining cast
         # x_ij ≤ cast_mj
         for i in range(num_scenes):
-            actors_in_scene = str(scenes[i][5]).split(",")
-            for m in actors_in_scene:
-                m = m.strip()
-                for j in range(max_days):
-                    model.Add(x[i, j] <= cast_used[m, j])
+            actors_raw = str(scenes[i][5]).strip()
+
+            if actors_raw:  # only process if not empty
+                actors_in_scene = actors_raw.split(",")
+
+                for m in actors_in_scene:
+                    m = m.strip()
+
+                    if m and m in actor_list:   # prevents ("", j) error
+                        for j in range(max_days):
+                            model.Add(x[i, j] <= cast_used[m, j])
         
         # defining staff
         # x_ij ≤ staff_qj
         for i in range(num_scenes):
-            staff_in_scene = str(scenes[i][6]).split(",")
-            for q in staff_in_scene:
-                q = q.strip()
-                for j in range(max_days):
-                    model.Add(x[i, j] <= staff_used[q, j])
+            staff_raw = str(scenes[i][6]).strip()
+
+            if staff_raw:
+                staff_in_scene = staff_raw.split(",")
+
+                for q in staff_in_scene:
+                    q = q.strip()
+
+                    if q and q in staff_list:
+                        for j in range(max_days):
+                            model.Add(x[i, j] <= staff_used[q, j])
 
         #  -----------------------------
         #  OBJECTIVE FUNCTION (MIN COST)
