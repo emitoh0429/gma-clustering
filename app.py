@@ -30,6 +30,9 @@ def optimize():
 
         DIRECTOR_CAPACITY = int(parameter.get("DirectorCapacity", 10) or 10)
 
+        HEAVY_WEIGHT = int(parameter.get("HeavySceneWeight", 2) or 2)
+        LIGHT_WEIGHT = int(parameter.get("LightSceneWeight", 1) or 1)
+
         main_cast_raw = str(parameter.get("MainCharacter", ""))
 
         # allow multiple names separated by comma
@@ -114,7 +117,7 @@ def optimize():
 
         # FIXED time of day rules from the input
         for i in range(num_scenes):
-            time = str(scenes[i][2]).upper()
+            time = str(scenes[i][2]).strip().upper()
 
             for j in range(max_days):
 
@@ -147,7 +150,7 @@ def optimize():
         for j in range(max_days):
             model.Add(
                 sum(
-                    (2 if scenes[i][1] == "Heavy" else 1) * D[i, j]
+                    (HEAVY_WEIGHT if str(scenes[i][1]).strip().lower() == "heavy" else LIGHT_WEIGHT) * D[i, j]
                     for i in range(num_scenes)
                 ) <= DIRECTOR_CAPACITY // 2
             )
@@ -158,7 +161,7 @@ def optimize():
         for j in range(max_days):
             model.Add(
                 sum(
-                    (2 if scenes[i][1] == "Heavy" else 1) * N[i, j]
+                    (HEAVY_WEIGHT if str(scenes[i][1]).strip().lower() == "heavy" else LIGHT_WEIGHT) * N[i, j]
                     for i in range(num_scenes)
                 ) <= DIRECTOR_CAPACITY // 2
             )
