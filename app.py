@@ -64,19 +64,23 @@ def optimize():
         # y_j = 1 if day j has scenes assigned to it
         y = [model.NewBoolVar(f"y_{j}") for j in range(max_days)]
 
-        # time decision variable
+        # time decision variable (day or night)
         D = {}
         N = {}
 
+        # switch: is scene i filmed during the DAY/NIGHT on day j?
         for i in range(num_scenes):
             for j in range(max_days):
                 D[i, j] = model.NewBoolVar(f"D_{i}_{j}")
                 N[i, j] = model.NewBoolVar(f"N_{i}_{j}")
 
+        # all unique locations/actors/staff used in scenes
         location_list = list(set(scene[3] for scene in scenes if scene[3]))
         actor_list = list(actor_cost.keys())
         staff_list = list(staff_cost.keys())
 
+        # everything below is to store every possible combination into dictionaries for the dependent variables
+        
         # loc_pj = 1 if location p will be visited on day j; 0 otherwise
         loc_used = {(p, j): model.NewBoolVar(f"loc_{p}_{j}") for p in location_list for j in range(max_days)}
 
@@ -99,23 +103,27 @@ def optimize():
         #  CONSTRAINTS
         #  -----------
 
+        # CONSTRAINT #6
         # each scene must be clustered exactly once
         # ∑ x_ij = 1
         for i in range(num_scenes):
             model.Add(sum(x[i, j] for j in range(max_days)) == 1)
 
+        # CONSTRAINT #4
         # each scene needs to be filmed either during the day or night
         for i in range(num_scenes):
             for j in range(max_days):
                 model.Add(D[i, j] + N[i, j] == x[i, j])
 
+        # CONSTRAINT #7
         # defining y_j
         # y_j ≥ x_ij
         for i in range(num_scenes):
             for j in range(max_days):
                 model.Add(x[i, j] <= y[j])
 
-        # FIXED time of day rules from the input
+        # CONSTRAINT #11 AND #12
+        # FIXED time of day rules from the input (i.e. scene must be filmed during the DAY)
         for i in range(num_scenes):
             time = str(scenes[i][2]).strip().upper()
 
@@ -133,6 +141,7 @@ def optimize():
                     # flexible = can be day or night
                     model.Add(D[i, j] + N[i, j] == x[i, j])
         
+        # CONSTRAINT #8
         # number of clusters cannot exceed maximum number of filming days
         # ∑ y_j ≤ MaxDays
         model.Add(sum(y[j] for j in range(max_days)) <= MAX_DAYS)
@@ -144,6 +153,7 @@ def optimize():
                 sum(x[i, j] for i in range(num_scenes)) >= y[j]
             )
 
+        # CONSTRAINT #9
         # daytime capacity (0.5DCap)
         # ∑ (weight_i + Day_i + x_ij) ≤ 0.5 * DCap
         # (DCap // 2 to remove decimal)
@@ -155,6 +165,7 @@ def optimize():
                 ) <= DIRECTOR_CAPACITY // 2
             )
         
+        # CONSTRAINT #10
         # nighttime capacity (0.5DCap)
         # ∑ (weight_i + Night_i + x_ij) ≤ 0.5 * DCap
         # (DCap // 2 to remove decimal)
@@ -166,6 +177,7 @@ def optimize():
                 ) <= DIRECTOR_CAPACITY // 2
             )
         
+        # CONSTRAINT #2
         # defining loc
         # x_ij ≤ loc_pj
         for i in range(num_scenes):
@@ -175,6 +187,7 @@ def optimize():
                 for j in range(max_days):
                     model.Add(x[i, j] <= loc_used[loc, j])
 
+        # CONSTRAINT #14 AND #15
         # defining dloc and nloc
         for i in range(num_scenes):
             loc = str(scenes[i][3]).strip()
@@ -185,11 +198,13 @@ def optimize():
                     model.Add(N[i, j] <= nloc_used[loc, j])
         
         # linking dloc and nloc to location usage
+        # i.e. location has a DAY scene on day j ≤ location is used on day j
         for p in location_list:
             for j in range(max_days):
                 model.Add(dloc_used[p, j] <= loc_used[p, j])
                 model.Add(nloc_used[p, j] <= loc_used[p, j])
 
+        # CONSTRAINT #16
         # defining b_pj
         for p in location_list:
             for j in range(max_days):
@@ -200,17 +215,20 @@ def optimize():
                 # if both are 1 -> b_pj must be 1
                 model.Add(both_used[p, j] >= dloc_used[p, j] + nloc_used[p, j] - 1)
 
+        # CONSTRAINT #17
         # only one location in a cluster may have both a scene that requires daytime filming and a scene that requires nighttime filming
         for j in range(max_days):
             model.Add(
                 sum(both_used[p, j] for p in location_list) <= 1
             )
 
+        # CONSTRAINT #13
         # max locations per day
         # ∑ loc_pj ≤ MaxLocationsPerDay
         for j in range(max_days):
             model.Add(sum(loc_used[p, j] for p in location_list) <= MAX_LOCATIONS)
 
+        # CONSTRAINT #1
         # defining cast
         # x_ij ≤ cast_mj
         for i in range(num_scenes):
@@ -226,6 +244,7 @@ def optimize():
                         for j in range(max_days):
                             model.Add(x[i, j] <= cast_used[m, j])
         
+        # CONSTRAINT #3
         # defining staff
         # x_ij ≤ staff_qj
         for i in range(num_scenes):
@@ -241,6 +260,7 @@ def optimize():
                         for j in range(max_days):
                             model.Add(x[i, j] <= staff_used[q, j])
 
+        # CONSTRAINT #18
         # main cast members need to go on set for at least 50% of all filming days
         for m in actor_list:
             if m in main_cast:
