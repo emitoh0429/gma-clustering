@@ -107,7 +107,9 @@ def optimize():
         # each scene must be clustered exactly once
         # ∑ x_ij = 1
         for i in range(num_scenes):
-            model.Add(sum(x[i, j] for j in range(max_days)) == 1)
+            model.Add(
+                sum(x[i, j] for j in range(max_days)) == 1
+            )
 
         # CONSTRAINT #4
         # each scene needs to be filmed either during the day or night
@@ -146,8 +148,7 @@ def optimize():
         # ∑ y_j ≤ MaxDays
         model.Add(sum(y[j] for j in range(max_days)) <= MAX_DAYS)
 
-        ## consecutive day usage (day 1,2,3... NO GAPS)
-        ## i.e. if day 3 has scenes then so must day 1 and 2
+        ## active filming days must contain at least one scene
         for j in range(max_days):
             model.Add(
                 sum(x[i, j] for i in range(num_scenes)) >= y[j]
@@ -306,15 +307,19 @@ def optimize():
         schedule = []
 
         for j in range(max_days):
-            day_scenes = []
 
-            for i in range(num_scenes):
-                if solver.Value(x[i, j]) == 1:
-                    day_scenes.append(scenes[i][0])
-
-            # MUST BE INSIDE LOOP
-            if day_scenes:
-                schedule.append(day_scenes)
+            # only process active filming days
+            if solver.Value(y[j]) == 1:
+                
+                day_scenes = []
+                
+                for i in range(num_scenes):
+                    if solver.Value(x[i, j]) == 1:
+                        day_scenes.append(scenes[i][0])
+                
+                # MUST BE INSIDE LOOP
+                if day_scenes:
+                    schedule.append(day_scenes)
 
         # add day labels AFTER filtering
         formatted_schedule = []
