@@ -300,6 +300,12 @@ def optimize():
         solver.parameters.max_time_in_seconds = 10
         solver.Solve(model)
 
+        if status != cp_model.OPTIMAL and status != cp_model.FEASIBLE:
+            return jsonify({
+                "error": "No feasible solution found",
+                "status": str(status)
+            }), 500
+
         #  ------
         #  OUTPUT
         #  ------
