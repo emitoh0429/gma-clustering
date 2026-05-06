@@ -47,7 +47,7 @@ def optimize():
         model = cp_model.CpModel()
 
         num_scenes = len(scenes)
-        max_days = num_scenes #worst case scenario
+        max_days = MAX_DAYS #worst case scenario
 
         #  ------------------
         #  DECISION VARIABLES
