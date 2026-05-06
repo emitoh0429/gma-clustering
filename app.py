@@ -298,7 +298,9 @@ def optimize():
 
         solver = cp_model.CpSolver()
         solver.parameters.max_time_in_seconds = 10
-        solver.Solve(model)
+        status = solver.Solve(model)
+
+        print("SOLVER STATUS:", status)
 
         if status != cp_model.OPTIMAL and status != cp_model.FEASIBLE:
             return jsonify({
