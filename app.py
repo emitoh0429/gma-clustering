@@ -34,7 +34,7 @@ def optimize():
         for row in location_groups_raw:
             group_name = str(row[0]).strip()
 
-            if not group_name:
+            if not group_name.startswith("LocationGroup"):
                 continue
 
             assigned_locations = []
