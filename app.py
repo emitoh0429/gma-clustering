@@ -15,6 +15,8 @@ def optimize():
         locations_raw = data['locations']
         parameter_raw = data['parameter']
 
+        location_groups_raw = data['location_groups']
+
         # remove headers from the list
         scenes = scenes_raw[1:]
         actors = actors_raw[1:]
@@ -23,6 +25,27 @@ def optimize():
         parameter_rows = parameter_raw[1:]
 
         parameter = {row[0]: row[1] for row in parameter_rows}
+
+        # location group mapping
+        # {"LocationGroup1": ["House", "Cafe"]}
+
+        location_group_dict = {}
+
+        for row in location_groups_raw:
+            group_name = str(row[0]).strip()
+
+            if not group_name:
+                continue
+
+            assigned_locations = []
+
+            for cell in row[1:]:
+                loc = str(cell).strip()
+                if loc:
+                    assigned_locations.append(loc)
+
+            if assigned_locations:
+                location_group_dict[group_name] = assigned_locations
 
         # parameter safety net (if sheet empty -> use default values)
         MAX_DAYS = int(parameter.get("MaxDays", 8) or 8)
@@ -74,8 +97,19 @@ def optimize():
                 D[i, j] = model.NewBoolVar(f"D_{i}_{j}")
                 N[i, j] = model.NewBoolVar(f"N_{i}_{j}")
 
-        # all unique locations/actors/staff used in scenes
+        # all unique locations used in scenes
         location_list = list(set(scene[3] for scene in scenes if scene[3]))
+        
+        # reverse lookup: "House" -> "LocationGroup1"
+        location_to_group = {}
+
+        for group_name, locs in location_group_dict.items():
+            for loc in locs:
+                location_to_group[loc] = group_name
+        
+        group_list = list(location_group_dict.keys())
+
+        # all unique actors/staff used in scenes
         actor_list = list(actor_cost.keys())
         staff_list = list(staff_cost.keys())
 
@@ -83,6 +117,9 @@ def optimize():
         
         # loc_pj = 1 if location p will be visited on day j; 0 otherwise
         loc_used = {(p, j): model.NewBoolVar(f"loc_{p}_{j}") for p in location_list for j in range(max_days)}
+
+        #locgroup_tj = 1 if location group t will be visited on day j
+        locgroup_used = {(t, j): model.NewBoolVar(f"locgroup_{t}_{j}") for t in group_list for j in range(max_days)}
 
         # dloc_pj = 1 if location p has at least one DAY scene on day j
         dloc_used = {(p, j): model.NewBoolVar(f"dloc_{p}_{j}") for p in location_list for j in range(max_days)}
@@ -179,14 +216,19 @@ def optimize():
             )
         
         # CONSTRAINT #2
-        # defining loc
-        # x_ij ≤ loc_pj
+        # if scene i is filmed on cluster j and requires location p, then I need to visit location p on cluster j
+        # x_ij lreq_ip ≤ ∑ loc_ptj
         for i in range(num_scenes):
             loc = str(scenes[i][3]).strip()
 
             if loc and loc in location_list:   # prevents ("", j)
                 for j in range(max_days):
                     model.Add(x[i, j] <= loc_used[loc, j])
+
+                    # enforce location group if mapped
+                    if loc in location_to_group:
+                        t = location_to_group[loc]
+                        model.Add(x[i, j] <= locgroup_used[t, j])
 
         # CONSTRAINT #14 AND #15
         # defining dloc and nloc
@@ -228,6 +270,22 @@ def optimize():
         # ∑ loc_pj ≤ MaxLocationsPerDay
         for j in range(max_days):
             model.Add(sum(loc_used[p, j] for p in location_list) <= MAX_LOCATIONS)
+
+        # CONSTRAINT #19
+        # only 1 location group can be visited per day
+        # ∑ locgroup_tj = 1
+        for j in range(max_days):
+            model.Add(sum(locgroup_used[t, j] for t in group_list) <= 1)
+
+        # CONSTRAINT #20
+        # defining LocGrouptj; locations in a specific location group can only be visited if the location group is where filming will be done for the day
+        # ∑ loc_ptj ≤ M(locgroup_tj)
+        for p in location_list:
+            if p in location_to_group:
+                t = location_to_group[p]
+
+                for j in range(max_days):
+                    model.Add(loc_used[p, j] <= locgroup_used[t, j])
 
         # CONSTRAINT #1
         # defining cast
