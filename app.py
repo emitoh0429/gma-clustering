@@ -125,7 +125,7 @@ def optimize():
         locgroup_used = {(t, j): model.NewBoolVar(f"locgroup_{t}_{j}") for t in group_list for j in range(max_days)}
 
         # cgroup_pt = 1 if location p will be filmed in location group t
-        cgroup = {(p, t): model.NewBoolVar(f"cgroup_{p}_{t}") for p in location_list for t in location_to_group.get(p, [])}
+        cgroup = {(p, t): model.NewBoolVar(f"cgroup_{p}_{t}") for p in location_list for t in location_to_groups.get(p, [])}
         
         # dloc_pj = 1 if location p has at least one DAY scene on day j
         dloc_used = {(p, j): model.NewBoolVar(f"dloc_{p}_{j}") for p in location_list for j in range(max_days)}
@@ -231,10 +231,6 @@ def optimize():
                 for j in range(max_days):
                     model.Add(x[i, j] <= loc_used[loc, j])
 
-                    if loc in location_to_groups:
-                        for t in location_to_groups[loc]:
-                            model.Add(x[i, j] + cgroup[loc, t] - 1 <= locgroup_used[t, j]
-
         # CONSTRAINT #21
         # every location should be filmed in exactly one feasible location group
         for p in location_list:
@@ -284,7 +280,7 @@ def optimize():
 
         # CONSTRAINT #19
         # only 1 location group can be visited per day
-        # ∑ locgroup_tj = 1
+        # ∑ locgroup_tj <= 1
         for j in range(max_days):
             model.Add(sum(locgroup_used[t, j] for t in group_list) <= 1)
 
