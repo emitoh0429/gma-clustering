@@ -445,7 +445,7 @@ def optimize():
 
             if relaxed_result["status"] not in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
                 return jsonify({
-                    "error": "No feasible solution found at all"
+                    "error": "No feasible solution found"
                 }), 500
 
             relaxed_solver = relaxed_result["solver"]
