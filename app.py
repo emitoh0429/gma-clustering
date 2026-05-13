@@ -3,74 +3,30 @@ from ortools.sat.python import cp_model
 
 app = Flask(__name__)
 
-@app.route('/optimize', methods=['POST'])
-def optimize():
-    try:
-        # get the data from google sheets
-        data = request.json
-
-        scenes_raw = data['scenes']
-        actors_raw = data['actors']
-        staff_raw = data['staff']
-        locations_raw = data['locations']
-        parameter_raw = data['parameter']
-
-        location_groups_raw = data['location_groups']
-
-        # remove headers from the list
-        scenes = scenes_raw[1:]
-        actors = actors_raw[1:]
-        staff = staff_raw[1:]
-        locations = locations_raw[1:]
-        parameter_rows = parameter_raw[1:]
-
-        parameter = {row[0]: row[1] for row in parameter_rows}
-
-        # location group mapping
-        # {"LocationGroup1": ["House", "Cafe"]}
-
-        location_group_dict = {}
-
-        for row in location_groups_raw:
-            group_name = str(row[0]).strip()
-
-            if not group_name.startswith("LocationGroup"):
-                continue
-
-            assigned_locations = []
-
-            for cell in row[1:]:
-                loc = str(cell).strip()
-                if loc:
-                    assigned_locations.append(loc)
-
-            if assigned_locations:
-                location_group_dict[group_name] = assigned_locations
-
-        # parameter safety net (if sheet empty -> use default values)
-        MAX_DAYS = int(parameter.get("MaxDays", 100) or 100)
-        MAX_LOCATIONS = 2
-
-        DIRECTOR_CAPACITY = int(parameter.get("DirectorCapacity", 50) or 50)
-
-        HEAVY_WEIGHT = int(parameter.get("HeavySceneWeight", 2) or 2)
-        LIGHT_WEIGHT = int(parameter.get("LightSceneWeight", 1) or 1)
-
-        main_cast_raw = str(parameter.get("MainCharacter", ""))
-
-        # allow multiple names separated by comma
-        main_cast = [m.strip() for m in main_cast_raw.split(",") if m.strip()]
-
-        # cost parameters -> CONSTANTS
-        actor_cost = {row[0]: int(row[1]) for row in actors if row[1]}
-        staff_cost = {row[0]: int(row[1]) for row in staff if row[1]}
-        location_cost = {row[0]: int(row[1]) for row in locations if row[1]}
+def solve_schedule(
+    scenes,
+    actors,
+    staff,
+    locations,
+    parameter,
+    location_group_dict,
+    actor_cost,
+    staff_cost,
+    location_cost,
+    main_cast,
+    DIRECTOR_CAPACITY,
+    HEAVY_WEIGHT,
+    LIGHT_WEIGHT,
+    MAX_LOCATIONS,
+    max_days,
+    objective_mode="cost",
+    exact_days=None
+):
 
         # MODEL
         model = cp_model.CpModel()
 
         num_scenes = len(scenes)
-        max_days = MAX_DAYS #worst case scenario
 
         #  ------------------
         #  DECISION VARIABLES
@@ -189,7 +145,11 @@ def optimize():
         # CONSTRAINT #8
         # number of clusters cannot exceed maximum number of filming days
         # ∑ y_j ≤ MaxDays
-        model.Add(sum(y[j] for j in range(max_days)) <= MAX_DAYS)
+        if exact_days is not None:
+            model.Add(sum(y[j] for j in range(max_days)) == exact_days)
+            
+        else:
+            model.Add(sum(y[j] for j in range(max_days)) <= max_days)
 
         ## active filming days must contain at least one scene
         for j in range(max_days):
@@ -354,9 +314,14 @@ def optimize():
             for q in staff_list:
                 cost_terms.append(staff_cost.get(q, 0) * staff_used[q, j])
         
-        model.Minimize(
-            sum(cost_terms) + 1000 * sum(y[j] for j in range(max_days))
-        )
+        if objective_mode == "cost":
+            model.Minimize(
+                sum(cost_terms) + 1000 * sum(y[j] for j in range(max_days))
+            )
+        else:
+            model.Minimize(
+                sum(y[j] for j in range(max_days))
+            )
 
         #  ------
         #  SOLVER
@@ -366,17 +331,159 @@ def optimize():
         solver.parameters.max_time_in_seconds = 10
         status = solver.Solve(model)
 
-        print("SOLVER STATUS:", status)
+        return {
+            "status": status,
+            "solver": solver,
+            "x": x,
+            "y": y,
+            "max_days": max_days
+        }
 
-        if status != cp_model.OPTIMAL and status != cp_model.FEASIBLE:
-            return jsonify({
-                "error": "No feasible solution found",
-                "status": str(status)
-            }), 500
+@app.route('/optimize', methods=['POST'])
+def optimize():
+    try:
+        # get the data from google sheets
+        data = request.json
+
+        scenes_raw = data['scenes']
+        actors_raw = data['actors']
+        staff_raw = data['staff']
+        locations_raw = data['locations']
+        parameter_raw = data['parameter']
+
+        location_groups_raw = data['location_groups']
+
+        # remove headers from the list
+        scenes = scenes_raw[1:]
+        num_scenes = len(scenes)
+        actors = actors_raw[1:]
+        staff = staff_raw[1:]
+        locations = locations_raw[1:]
+        parameter_rows = parameter_raw[1:]
+
+        parameter = {row[0]: row[1] for row in parameter_rows}
+
+        # location group mapping
+        # {"LocationGroup1": ["House", "Cafe"]}
+
+        location_group_dict = {}
+
+        for row in location_groups_raw:
+            group_name = str(row[0]).strip()
+
+            if not group_name.startswith("LocationGroup"):
+                continue
+
+            assigned_locations = []
+
+            for cell in row[1:]:
+                loc = str(cell).strip()
+                if loc:
+                    assigned_locations.append(loc)
+
+            if assigned_locations:
+                location_group_dict[group_name] = assigned_locations
+
+        # parameter safety net (if sheet empty -> use default values)
+        MAX_DAYS = int(parameter.get("MaxDays", 100) or 100)
+        MAX_LOCATIONS = 2
+
+        DIRECTOR_CAPACITY = int(parameter.get("DirectorCapacity", 50) or 50)
+
+        HEAVY_WEIGHT = int(parameter.get("HeavySceneWeight", 2) or 2)
+        LIGHT_WEIGHT = int(parameter.get("LightSceneWeight", 1) or 1)
+
+        main_cast_raw = str(parameter.get("MainCharacter", ""))
+
+        # allow multiple names separated by comma
+        main_cast = [m.strip() for m in main_cast_raw.split(",") if m.strip()]
+
+        # cost parameters -> CONSTANTS
+        actor_cost = {row[0]: int(row[1]) for row in actors if row[1]}
+        staff_cost = {row[0]: int(row[1]) for row in staff if row[1]}
+        location_cost = {row[0]: int(row[1]) for row in locations if row[1]}
+
+        result = solve_schedule(
+            scenes,
+            actors,
+            staff,
+            locations,
+            parameter,
+            location_group_dict,
+            actor_cost,
+            staff_cost,
+            location_cost,
+            main_cast,
+            DIRECTOR_CAPACITY,
+            HEAVY_WEIGHT,
+            LIGHT_WEIGHT,
+            MAX_LOCATIONS,
+            MAX_DAYS,
+            objective_mode="cost"
+        )
+
+        if result["status"] not in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
+
+            relaxed_result = solve_schedule(
+                scenes,
+                actors,
+                staff,
+                locations,
+                parameter,
+                location_group_dict,
+                actor_cost,
+                staff_cost,
+                location_cost,
+                main_cast,
+                DIRECTOR_CAPACITY,
+                HEAVY_WEIGHT,
+                LIGHT_WEIGHT,
+                MAX_LOCATIONS,
+                100,
+                objective_mode="min_days"
+            )
+
+            if relaxed_result["status"] not in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
+                return jsonify({
+                    "error": "No feasible solution found at all"
+                }), 500
+
+            relaxed_solver = relaxed_result["solver"]
+            relaxed_y = relaxed_result["y"]
+
+            D_min = sum(
+                relaxed_solver.Value(relaxed_y[j])
+                for j in range(100)
+            )
+
+            result = solve_schedule(
+                scenes,
+                actors,
+                staff,
+                locations,
+                parameter,
+                location_group_dict,
+                actor_cost,
+                staff_cost,
+                location_cost,
+                main_cast,
+                DIRECTOR_CAPACITY,
+                HEAVY_WEIGHT,
+                LIGHT_WEIGHT,
+                MAX_LOCATIONS,
+                D_min,
+                objective_mode="cost",
+                exact_days=D_min
+            )
 
         #  ------
         #  OUTPUT
         #  ------
+
+        solver = result["solver"]
+        x = result["x"]
+        y = result["y"]
+        max_days = result["max_days"]
 
         schedule = []
 
