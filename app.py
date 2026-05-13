@@ -48,10 +48,10 @@ def optimize():
                 location_group_dict[group_name] = assigned_locations
 
         # parameter safety net (if sheet empty -> use default values)
-        MAX_DAYS = int(parameter.get("MaxDays", 8) or 8)
+        MAX_DAYS = int(parameter.get("MaxDays", 100) or 100)
         MAX_LOCATIONS = 2
 
-        DIRECTOR_CAPACITY = int(parameter.get("DirectorCapacity", 10) or 10)
+        DIRECTOR_CAPACITY = int(parameter.get("DirectorCapacity", 50) or 50)
 
         HEAVY_WEIGHT = int(parameter.get("HeavySceneWeight", 2) or 2)
         LIGHT_WEIGHT = int(parameter.get("LightSceneWeight", 1) or 1)
