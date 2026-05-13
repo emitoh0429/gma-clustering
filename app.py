@@ -100,13 +100,16 @@ def optimize():
         # all unique locations used in scenes
         location_list = list(set(scene[3] for scene in scenes if scene[3]))
         
-        # reverse lookup: "House" -> "LocationGroup1"
-        location_to_group = {}
+        # reverse lookup: "Mall" -> ["LocationGroup1, "LocationGroup2"]
+        location_to_groups = {}
 
         for group_name, locs in location_group_dict.items():
             for loc in locs:
-                location_to_group[loc] = group_name
-        
+                if loc not in location_to_groups:
+                    location_to_groups[loc] = []
+
+                location_to_groups[loc].append(group_name)
+
         group_list = list(location_group_dict.keys())
 
         # all unique actors/staff used in scenes
@@ -121,6 +124,9 @@ def optimize():
         #locgroup_tj = 1 if location group t will be visited on day j
         locgroup_used = {(t, j): model.NewBoolVar(f"locgroup_{t}_{j}") for t in group_list for j in range(max_days)}
 
+        # cgroup_pt = 1 if location p will be filmed in location group t
+        cgroup = {(p, t): model.NewBoolVar(f"cgroup_{p}_{t}") for p in location_list for t in location_to_group.get(p, [])}
+        
         # dloc_pj = 1 if location p has at least one DAY scene on day j
         dloc_used = {(p, j): model.NewBoolVar(f"dloc_{p}_{j}") for p in location_list for j in range(max_days)}
 
@@ -225,11 +231,16 @@ def optimize():
                 for j in range(max_days):
                     model.Add(x[i, j] <= loc_used[loc, j])
 
-                    # enforce location group if mapped
-                    if loc in location_to_group:
-                        t = location_to_group[loc]
-                        model.Add(x[i, j] <= locgroup_used[t, j])
+                    if loc in location_to_groups:
+                        for t in location_to_groups[loc]:
+                            model.Add(x[i, j] + cgroup[loc, t] - 1 <= locgroup_used[t, j]
 
+        # CONSTRAINT #21
+        # every location should be filmed in exactly one feasible location group
+        for p in location_list:
+            if p in location_to_groups:
+                model.Add(sum(cgroup[p, t] for t in location_to_groups[p]) == 1)
+        
         # CONSTRAINT #14 AND #15
         # defining dloc and nloc
         for i in range(num_scenes):
@@ -281,11 +292,12 @@ def optimize():
         # defining LocGrouptj; locations in a specific location group can only be visited if the location group is where filming will be done for the day
         # ∑ loc_ptj ≤ M(locgroup_tj)
         for p in location_list:
-            if p in location_to_group:
-                t = location_to_group[p]
-
-                for j in range(max_days):
-                    model.Add(loc_used[p, j] <= locgroup_used[t, j])
+            if p in location_to_groups:
+                for t in location_to_groups[p]:
+                    for j in range(max_days):
+                        model.Add(
+                            loc_used[p, j] + cgroup[p, t] - 1 <= locgroup_used[t, j]
+                        )
 
         # CONSTRAINT #1
         # defining cast
