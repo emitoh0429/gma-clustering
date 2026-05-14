@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify
 from ortools.sat.python import cp_model
+import traceback
 
 app = Flask(__name__)
 
@@ -552,7 +553,10 @@ def optimize():
         })
     
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({
+            "error": str(e),
+            "trace": traceback.format_exc()
+        }), 500
 
 @app.route('/')
 def home():
