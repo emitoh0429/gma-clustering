@@ -21,8 +21,9 @@ def solve_schedule(
     LIGHT_WEIGHT,
     MAX_LOCATIONS,
     max_days,
-    objective_mode="cost",
-    exact_days=None
+    objective_mode = "cost",
+    exact_days = None,
+    solve_time = 10
 ):
 
         # MODEL
@@ -340,7 +341,7 @@ def solve_schedule(
         #  ------
 
         solver = cp_model.CpSolver()
-        solver.parameters.max_time_in_seconds = 10
+        solver.parameters.max_time_in_seconds = solve_time
         status = solver.Solve(model)
 
         return {
@@ -442,7 +443,8 @@ def optimize():
             LIGHT_WEIGHT,
             MAX_LOCATIONS,
             MAX_DAYS,
-            objective_mode="cost"
+            objective_mode = "cost",
+            solve_time = 10
         )
 
         if result["status"] not in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
@@ -464,7 +466,8 @@ def optimize():
                 LIGHT_WEIGHT,
                 MAX_LOCATIONS,
                 100,
-                objective_mode="min_days"
+                objective_mode = "min_days"
+                solve_time = 60
             )
 
             if relaxed_result["status"] not in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
@@ -503,7 +506,8 @@ def optimize():
                 MAX_LOCATIONS,
                 D_min,
                 objective_mode="cost",
-                exact_days=D_min
+                exact_days=D_min,
+                solve_time = 20
             )
 
         #  ------
