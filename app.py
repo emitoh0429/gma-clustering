@@ -466,7 +466,7 @@ def optimize():
                 LIGHT_WEIGHT,
                 MAX_LOCATIONS,
                 100,
-                objective_mode = "min_days"
+                objective_mode = "min_days",
                 solve_time = 60
             )
 
