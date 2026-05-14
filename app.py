@@ -455,7 +455,7 @@ def optimize():
                 location_group_dict,
                 actor_cost,
                 staff_cost,
-                staff_specific
+                staff_specific,
                 location_cost,
                 main_cast,
                 DIRECTOR_CAPACITY,
@@ -491,7 +491,7 @@ def optimize():
                 location_group_dict,
                 actor_cost,
                 staff_cost,
-                staff_specific
+                staff_specific,
                 location_cost,
                 main_cast,
                 DIRECTOR_CAPACITY,
