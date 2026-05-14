@@ -328,7 +328,7 @@ def solve_schedule(
         
         if objective_mode == "cost":
             model.Minimize(
-                sum(cost_terms) + 1000 * sum(y[j] for j in range(max_days))
+                sum(cost_terms) + 50000 * sum(y[j] for j in range(max_days))
             )
         else:
             model.Minimize(
