@@ -555,7 +555,8 @@ def optimize():
         return jsonify({
             "schedule": formatted_schedule,
             "used_fallback": used_fallback,
-            "final_days": final_days
+            "final_days": final_days,
+            "status": int(result["status"])
         })
     
     except Exception as e:
