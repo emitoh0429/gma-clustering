@@ -403,6 +403,9 @@ def optimize():
         staff_cost = {row[0]: int(row[1]) for row in staff if row[1]}
         location_cost = {row[0]: int(row[1]) for row in locations if row[1]}
 
+        used_fallback = False
+        final_days = MAX_DAYS
+
         result = solve_schedule(
             scenes,
             actors,
@@ -455,6 +458,9 @@ def optimize():
                 relaxed_solver.Value(relaxed_y[j])
                 for j in range(100)
             )
+
+            used_fallback = True
+            final_days = D_min
 
             result = solve_schedule(
                 scenes,
@@ -518,7 +524,11 @@ def optimize():
             while len(row) < max_len:
                 row.append("")
 
-        return jsonify({"schedule": formatted_schedule})  
+        return jsonify({
+            "schedule": formatted_schedule
+            "used_fallback": used_fallback
+            "final_days": final_days
+        })
     
     except Exception as e:
         return jsonify({"error": str(e)}), 500
