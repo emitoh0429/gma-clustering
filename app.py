@@ -525,8 +525,8 @@ def optimize():
                 row.append("")
 
         return jsonify({
-            "schedule": formatted_schedule
-            "used_fallback": used_fallback
+            "schedule": formatted_schedule,
+            "used_fallback": used_fallback,
             "final_days": final_days
         })
     
