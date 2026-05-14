@@ -507,7 +507,7 @@ def optimize():
                 D_min,
                 objective_mode="cost",
                 exact_days=D_min,
-                solve_time = 20
+                solve_time = 60
             )
 
         #  ------
