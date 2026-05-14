@@ -12,6 +12,7 @@ def solve_schedule(
     location_group_dict,
     actor_cost,
     staff_cost,
+    staff_specific,
     location_cost,
     main_cast,
     DIRECTOR_CAPACITY,
@@ -312,7 +313,17 @@ def solve_schedule(
 
             # staff cost per day
             for q in staff_list:
-                cost_terms.append(staff_cost.get(q, 0) * staff_used[q, j])
+                if staff_specific.get(q, True):
+                    # specialised staff
+                    cost_terms.append(
+                        staff_cost.get(q,0) * staff_used[q, j]
+                    )
+
+                else:
+                    # non-spec staff
+                    cost_terms.append(
+                        staff_cost.get(q, 0) * y[j]
+                    )
         
         if objective_mode == "cost":
             model.Minimize(
@@ -401,6 +412,13 @@ def optimize():
         # cost parameters -> CONSTANTS
         actor_cost = {row[0]: int(row[1]) for row in actors if row[1]}
         staff_cost = {row[0]: int(row[1]) for row in staff if row[1]}
+
+        staff_specific = {
+            row[0]: str(row[2]).strip().upper() == "TRUE"
+            for row in staff
+            if row[0]
+        }
+
         location_cost = {row[0]: int(row[1]) for row in locations if row[1]}
 
         used_fallback = False
@@ -415,6 +433,7 @@ def optimize():
             location_group_dict,
             actor_cost,
             staff_cost,
+            staff_specific,
             location_cost,
             main_cast,
             DIRECTOR_CAPACITY,
@@ -436,6 +455,7 @@ def optimize():
                 location_group_dict,
                 actor_cost,
                 staff_cost,
+                staff_specific
                 location_cost,
                 main_cast,
                 DIRECTOR_CAPACITY,
@@ -471,6 +491,7 @@ def optimize():
                 location_group_dict,
                 actor_cost,
                 staff_cost,
+                staff_specific
                 location_cost,
                 main_cast,
                 DIRECTOR_CAPACITY,
