@@ -328,7 +328,7 @@ def solve_schedule(
         
         if objective_mode == "cost":
             model.Minimize(
-                sum(cost_terms) + 50000 * sum(y[j] for j in range(max_days))
+                sum(cost_terms) + 1000 * sum(y[j] for j in range(max_days))
             )
         else:
             model.Minimize(
@@ -469,7 +469,9 @@ def optimize():
 
             if relaxed_result["status"] not in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
                 return jsonify({
-                    "error": "No feasible solution found"
+                    "error": "No feasible solution found",
+                    "initial_status": result["status"],
+                    "relaxed_status": relaxed_result["status"]
                 }), 500
 
             relaxed_solver = relaxed_result["solver"]
