@@ -342,6 +342,7 @@ def solve_schedule(
 
         solver = cp_model.CpSolver()
         solver.parameters.max_time_in_seconds = solve_time
+        solver.parameters.num_search_workers = 8
         solver.parameters.relative_gap_limit = 0.01
         status = solver.Solve(model)
 
