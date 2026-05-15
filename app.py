@@ -399,7 +399,7 @@ def optimize():
                 location_group_dict[group_name] = assigned_locations
 
         # parameter safety net (if sheet empty -> use default values)
-        MAX_DAYS = int(parameter.get("MaxDays", 100) or 100)
+        MAX_DAYS = int(parameter.get("MaxDays", 30) or 30)
         MAX_LOCATIONS = 2
 
         DIRECTOR_CAPACITY = int(parameter.get("DirectorCapacity", 50) or 50)
@@ -425,7 +425,7 @@ def optimize():
         location_cost = {row[0]: int(row[1]) for row in locations if row[1]}
 
         used_fallback = False
-        final_days = MAX_DAYS
+        final_days = None
 
         result = solve_schedule(
             scenes,
@@ -445,7 +445,7 @@ def optimize():
             MAX_LOCATIONS,
             MAX_DAYS,
             objective_mode = "cost",
-            solve_time = 180
+            solve_time = 90
         )
 
         if result["status"] not in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
@@ -519,6 +519,11 @@ def optimize():
         x = result["x"]
         y = result["y"]
         max_days = result["max_days"]
+
+        final_days = sum(
+            solver.Value(y[j])
+            for j in range(max_days)
+        )
 
         schedule = []
 
