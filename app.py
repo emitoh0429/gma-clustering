@@ -342,6 +342,7 @@ def solve_schedule(
 
         solver = cp_model.CpSolver()
         solver.parameters.max_time_in_seconds = solve_time
+        solver.parameters.relative_gap_limit = 0.01
         status = solver.Solve(model)
 
         return {
@@ -444,7 +445,7 @@ def optimize():
             MAX_LOCATIONS,
             MAX_DAYS,
             objective_mode = "cost",
-            solve_time = 10
+            solve_time = 60
         )
 
         if result["status"] not in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
@@ -556,7 +557,9 @@ def optimize():
             "schedule": formatted_schedule,
             "used_fallback": used_fallback,
             "final_days": final_days,
-            "status": int(result["status"])
+            "status": int(result["status"]),
+            "gap": solver.ObjectiveValue(),
+            "best_bound": solver.BestObjectiveBound()
         })
     
     except Exception as e:
