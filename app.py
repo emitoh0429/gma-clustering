@@ -344,6 +344,7 @@ def solve_schedule(
         solver.parameters.max_time_in_seconds = solve_time
         solver.parameters.num_search_workers = 8
         solver.parameters.relative_gap_limit = 0.01
+        solver.parameters.random_seed = 42
         status = solver.Solve(model)
 
         return {
