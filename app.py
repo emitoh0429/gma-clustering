@@ -468,7 +468,7 @@ def optimize():
                 HEAVY_WEIGHT,
                 LIGHT_WEIGHT,
                 MAX_LOCATIONS,
-                100,
+                30,
                 objective_mode = "min_days",
                 solve_time = 60
             )
@@ -485,7 +485,7 @@ def optimize():
 
             D_min = sum(
                 relaxed_solver.Value(relaxed_y[j])
-                for j in range(100)
+                for j in range(30)
             )
 
             used_fallback = True
