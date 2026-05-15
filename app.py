@@ -445,7 +445,7 @@ def optimize():
             MAX_LOCATIONS,
             MAX_DAYS,
             objective_mode = "cost",
-            solve_time = 60
+            solve_time = 90
         )
 
         if result["status"] not in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
