@@ -402,7 +402,7 @@ def optimize():
 
         # parameter safety net (if sheet empty -> use default values)
         MAX_DAYS = int(parameter.get("MaxDays", 30) or 30)
-        MAX_LOCATIONS = 2
+        MAX_LOCATIONS = int(parameter.get("MaxLocationsPerDay", 2) or 2)
 
         DIRECTOR_CAPACITY = int(parameter.get("DirectorCapacity", 50) or 50)
 
