@@ -559,7 +559,8 @@ def optimize():
             "final_days": final_days,
             "status": int(result["status"]),
             "gap": solver.ObjectiveValue(),
-            "best_bound": solver.BestObjectiveBound()
+            "best_bound": solver.BestObjectiveBound(),
+            "objective": solver.ObjectiveValue()
         })
     
     except Exception as e:
