@@ -563,9 +563,12 @@ def optimize():
         })
     
     except Exception as e:
+        error_trace = traceback.format_exc()
+        print("ERROR:", str(e))
+        print("TRACE:", error_trace)
         return jsonify({
             "error": str(e),
-            "trace": traceback.format_exc()
+            "trace": error_trace
         }), 500
 
 @app.route('/')
