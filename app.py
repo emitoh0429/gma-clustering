@@ -328,8 +328,9 @@ def solve_schedule(
                     )
         
         if objective_mode == "cost":
+            day_penalty = max(actor_cost.values()) * len(actor_list) if actor_cost else 10000
             model.Minimize(
-                sum(cost_terms) + 1000 * sum(y[j] for j in range(max_days))
+                sum(cost_terms) + day_penalty * sum(y[j] for j in range(max_days))
             )
         else:
             model.Minimize(
