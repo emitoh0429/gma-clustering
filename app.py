@@ -427,6 +427,8 @@ def optimize():
         used_fallback = False
         final_days = None
 
+        PHASE1_MAX_DAYS = 30
+        
         result_phase1 = solve_schedule(
             scenes,
             actors,
@@ -453,13 +455,13 @@ def optimize():
 
         D_min = sum(
             result_phase1["solver"].Value(result_phase1["y"][j])
-            for j in range(MAX_DAYS)
+            for j in range(PHASE1_MAX_DAYS)
         )
 
         # explore D_min-2 to D_min+2, skipping anything below 1 or above MAX_DAYS
         candidate_days = [
             d for d in range(D_min - 2, D_min + 3)
-            if 1 <= d <= MAX_DAYS
+            if 1 <= d <= PHASE1_MAX_DAYS
         ]
 
         best_result = None
