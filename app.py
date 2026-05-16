@@ -556,11 +556,14 @@ def optimize():
             "schedule": formatted_schedule,
             "used_fallback": used_fallback,
             "final_days": final_days,
+            "user_max_days": MAX_DAYS,
+            "is_user_days_feasible": final_days <= MAX_DAYS,
+            "D_min": D_min,
             "status": int(result["status"]),
             "gap": solver.ObjectiveValue(),
             "best_bound": solver.BestObjectiveBound(),
             "objective": solver.ObjectiveValue()
-        })
+})
     
     except Exception as e:
         error_trace = traceback.format_exc()
