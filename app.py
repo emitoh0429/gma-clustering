@@ -445,7 +445,7 @@ def optimize():
             HEAVY_WEIGHT,
             LIGHT_WEIGHT,
             MAX_LOCATIONS,
-            MAX_DAYS,
+            PHASE1_MAX_DAYS,
             objective_mode="min_days",
             solve_time=60
         )
