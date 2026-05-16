@@ -328,10 +328,7 @@ def solve_schedule(
                     )
         
         if objective_mode == "cost":
-            day_penalty = max(actor_cost.values()) * len(actor_list) if actor_cost else 10000
-            model.Minimize(
-                sum(cost_terms) + day_penalty * sum(y[j] for j in range(max_days))
-            )
+            model.Minimize(sum(cost_terms))
         else:
             model.Minimize(
                 sum(y[j] for j in range(max_days))
@@ -430,7 +427,7 @@ def optimize():
         used_fallback = False
         final_days = None
 
-        result = solve_schedule(
+        result_phase1 = solve_schedule(
             scenes,
             actors,
             staff,
@@ -447,13 +444,29 @@ def optimize():
             LIGHT_WEIGHT,
             MAX_LOCATIONS,
             MAX_DAYS,
-            objective_mode = "cost",
-            solve_time = 90
+            objective_mode="min_days",
+            solve_time=60
         )
 
-        if result["status"] not in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
+        if result_phase1["status"] not in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
+            return jsonify({"error": "No feasible solution found"}), 500
 
-            relaxed_result = solve_schedule(
+        D_min = sum(
+            result_phase1["solver"].Value(result_phase1["y"][j])
+            for j in range(MAX_DAYS)
+        )
+
+        # explore D_min-2 to D_min+2, skipping anything below 1 or above MAX_DAYS
+        candidate_days = [
+            d for d in range(D_min - 2, D_min + 3)
+            if 1 <= d <= MAX_DAYS
+        ]
+
+        best_result = None
+        best_cost = float("inf")
+
+        for d in candidate_days:
+            candidate = solve_schedule(
                 scenes,
                 actors,
                 staff,
@@ -469,50 +482,26 @@ def optimize():
                 HEAVY_WEIGHT,
                 LIGHT_WEIGHT,
                 MAX_LOCATIONS,
-                30,
-                objective_mode = "min_days",
-                solve_time = 60
-            )
-
-            if relaxed_result["status"] not in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
-                return jsonify({
-                    "error": "No feasible solution found",
-                    "initial_status": int(result["status"]),
-                    "relaxed_status": int(relaxed_result["status"])
-                }), 500
-
-            relaxed_solver = relaxed_result["solver"]
-            relaxed_y = relaxed_result["y"]
-
-            D_min = sum(
-                relaxed_solver.Value(relaxed_y[j])
-                for j in range(30)
-            )
-
-            used_fallback = True
-            final_days = D_min
-
-            result = solve_schedule(
-                scenes,
-                actors,
-                staff,
-                locations,
-                parameter,
-                location_group_dict,
-                actor_cost,
-                staff_cost,
-                staff_specific,
-                location_cost,
-                main_cast,
-                DIRECTOR_CAPACITY,
-                HEAVY_WEIGHT,
-                LIGHT_WEIGHT,
-                MAX_LOCATIONS,
-                D_min,
+                d,
                 objective_mode="cost",
-                exact_days=D_min,
-                solve_time = 60
+                exact_days=d,
+                solve_time=45
             )
+
+            # skip infeasible (e.g. d < D_min will likely be infeasible)
+            if candidate["status"] not in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
+                continue
+
+            candidate_cost = candidate["solver"].ObjectiveValue()
+
+            if candidate_cost < best_cost:
+                best_cost = candidate_cost
+                best_result = candidate
+
+        if best_result is None:
+            return jsonify({"error": "No feasible solution found across day range"}), 500
+
+        result = best_result
 
         #  ------
         #  OUTPUT
