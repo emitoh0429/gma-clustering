@@ -1,19 +1,28 @@
 from flask import Flask, request, jsonify
+## Flask -> creates the server
+## request -> reads the data from Google Sheets
+## jsonify -> sends the data back as JSON
+
 from ortools.sat.python import cp_model
+## cp_model -> constraint programming + SAT solver + integer programming 
+
 import traceback
+## traceback -> checks for crashes + debugging
 
-app = Flask(__name__)
+app = Flask(__name__) 
+## -> creates the web server
 
-def solve_schedule(
+def solve_schedule(  ## defines the optimisation function + contains the scheduling logic
+## all the parameters and inputs these into the model passed as arguments 
     scenes,
     actors,
     staff,
     locations,
     parameter,
-    location_group_dict,
+    location_group_dict,## maps grouped locations (geographical clustering)
     actor_cost,
     staff_cost,
-    staff_specific,
+    staff_specific,## boolean lookup for spec and non-spec
     location_cost,
     main_cast,
     DIRECTOR_CAPACITY,
@@ -22,14 +31,14 @@ def solve_schedule(
     MAX_LOCATIONS,
     max_days,
     objective_mode = "cost",
-    exact_days = None,
-    solve_time = 10
+    exact_days = None, ## no exact requirement for num of days 
+    solve_time = 10 
 ):
 
         # MODEL
-        model = cp_model.CpModel()
+        model = cp_model.CpModel() ## where everything is stored
 
-        num_scenes = len(scenes)
+        num_scenes = len(scenes) ## counts how many scenes exist in the one-liners
 
         #  ------------------
         #  DECISION VARIABLES
@@ -37,16 +46,16 @@ def solve_schedule(
 
         # INDEPENDENT VARIABLE 
         # x_ij = 1 if scene i will be clustered on day j; 0 otherwise
-        x = {}
-        for i in range(num_scenes):
-            for j in range(max_days):
-                x[i, j] = model.NewBoolVar(f"x_{i}_{j}")
+        x = {} ## creates an empty dictionary
+        for i in range(num_scenes):                           ## loops through all the possible scenes
+            for j in range(max_days):                         ## loops through all the days as candidates
+                x[i, j] = model.NewBoolVar(f"x_{i}_{j}")      ## creates a binary variable
 
         # DEPENDENT VARIABLE
-        # y_j = 1 if day j has scenes assigned to it
-        y = [model.NewBoolVar(f"y_{j}") for j in range(max_days)]
+        # y_j = 1 if day j has scenes assigned to it (whether or not a day is active/has filming scheduled)
+        y = [model.NewBoolVar(f"y_{j}") for j in range(max_days)]    ## in list formal since only one index
 
-        # time decision variable (day or night)
+        # time decision variable (day or night) -> separates day and night assignments
         D = {}
         N = {}
 
@@ -56,10 +65,12 @@ def solve_schedule(
                 D[i, j] = model.NewBoolVar(f"D_{i}_{j}")
                 N[i, j] = model.NewBoolVar(f"N_{i}_{j}")
 
-        # all unique locations used in scenes
+        # all unique locations will be extracted (no duplicates) then converts it back to a list
+        # used to define other dependent variables
         location_list = list(set(scene[3] for scene in scenes if scene[3]))
         
         # reverse lookup: "Mall" -> ["LocationGroup1, "LocationGroup2"]
+        # says: for this location, what location group does it belong to?
         location_to_groups = {}
 
         for group_name, locs in location_group_dict.items():
@@ -76,6 +87,8 @@ def solve_schedule(
         staff_list = list(staff_cost.keys())
 
         # everything below is to store every possible combination into dictionaries for the dependent variables
+        # placeholders now, actual values will be solved later
+        # due to the number of BoolVar, solve time gets longer since there are multiple possibilities 
         
         # loc_pj = 1 if location p will be visited on day j; 0 otherwise
         loc_used = {(p, j): model.NewBoolVar(f"loc_{p}_{j}") for p in location_list for j in range(max_days)}
@@ -84,6 +97,7 @@ def solve_schedule(
         locgroup_used = {(t, j): model.NewBoolVar(f"locgroup_{t}_{j}") for t in group_list for j in range(max_days)}
 
         # cgroup_pt = 1 if location p will be filmed in location group t
+        # creates only valid and feasible combinations
         cgroup = {(p, t): model.NewBoolVar(f"cgroup_{p}_{t}") for p in location_list for t in location_to_groups.get(p, [])}
         
         # dloc_pj = 1 if location p has at least one DAY scene on day j
@@ -105,6 +119,8 @@ def solve_schedule(
         #  CONSTRAINTS
         #  -----------
 
+        # turns the BoolVars into a mathematical system 
+
         # CONSTRAINT #6
         # each scene must be clustered exactly once
         # ∑ x_ij = 1
@@ -121,28 +137,30 @@ def solve_schedule(
 
         # CONSTRAINT #7
         # defining y_j
-        # y_j ≥ x_ij
+        # y_j ≥ x_ij (day must be active if there is a scene)
         for i in range(num_scenes):
             for j in range(max_days):
-                model.Add(x[i, j] <= y[j])
+                model.Add(x[i, j] <= y[j]) 
 
         # CONSTRAINT #11 AND #12
         # FIXED time of day rules from the input (i.e. scene must be filmed during the DAY)
         for i in range(num_scenes):
-            time = str(scenes[i][2]).strip().upper()
+            time = str(scenes[i][2]).strip().upper() ## reads whether it is day or night and fixes formatting (to ensure it reads everything properly
 
             for j in range(max_days):
-
+                
+                # if scene is DAY ONLY; cannot choose night if can only film in the day
                 if time == "DAY":
                     model.Add(D[i, j] == x[i, j])
                     model.Add(N[i, j] == 0)
 
+                # if scene is NIGHT ONLY
                 elif time == "NIGHT":
                     model.Add(N[i, j] == x[i, j])
                     model.Add(D[i, j] == 0)
 
                 elif "DAY" in time and "NIGHT" in time:
-                    # flexible = can be day or night
+                    # flexible = can be day or night (solver chooses whichever helps the objective)
                     model.Add(D[i, j] + N[i, j] == x[i, j])
         
         # CONSTRAINT #8
@@ -154,7 +172,8 @@ def solve_schedule(
         else:
             model.Add(sum(y[j] for j in range(max_days)) <= max_days)
 
-        ## active filming days must contain at least one scene
+        ## active filming days must contain at least one scene (prevents an active day with nothing being filmed)
+        ## sum of scenes must be at least 1 if the day is active
         for j in range(max_days):
             model.Add(
                 sum(x[i, j] for i in range(num_scenes)) >= y[j]
@@ -170,7 +189,7 @@ def solve_schedule(
                     (HEAVY_WEIGHT if str(scenes[i][1]).strip().lower() == "heavy" else LIGHT_WEIGHT) * D[i, j]
                     for i in range(num_scenes)
                 ) <= DIRECTOR_CAPACITY // 2
-            )
+            )  ## summation of scene weights * if DAY TIME scene is active (1 or 0) ≤ half of director's capacity
         
         # CONSTRAINT #10
         # nighttime capacity (0.5DCap)
@@ -187,21 +206,23 @@ def solve_schedule(
         # CONSTRAINT #2
         # if scene i is filmed on cluster j and requires location p, then I need to visit location p on cluster j
         # x_ij lreq_ip ≤ ∑ loc_ptj
+        # if scene is scheduled, then you must use its location
         for i in range(num_scenes):
             loc = str(scenes[i][3]).strip()
 
-            if loc and loc in location_list:   # prevents ("", j)
+            if loc and loc in location_list:   # prevents ("", j) ensures it exists 
                 for j in range(max_days):
                     model.Add(x[i, j] <= loc_used[loc, j])
 
         # CONSTRAINT #21
-        # every location should be filmed in exactly one feasible location group
+        # every location should be filmed in exactly one feasible location group (every location belongs to only ONE locationgroup)
+        # must choose which LocGroup the location belongs to if the location is flexible
         for p in location_list:
             if p in location_to_groups:
                 model.Add(sum(cgroup[p, t] for t in location_to_groups[p]) == 1)
         
         # CONSTRAINT #14 AND #15
-        # defining dloc and nloc
+        # defining dloc and nloc (tells us if location has something to film during the day or night -> needed for if the location has flexible filming times)
         for i in range(num_scenes):
             loc = str(scenes[i][3]).strip()
 
@@ -214,11 +235,11 @@ def solve_schedule(
         # i.e. location has a DAY scene on day j ≤ location is used on day j
         for p in location_list:
             for j in range(max_days):
-                model.Add(dloc_used[p, j] <= loc_used[p, j])
+                model.Add(dloc_used[p, j] <= loc_used[p, j]) # if location has a day or night filming, them location must be used
                 model.Add(nloc_used[p, j] <= loc_used[p, j])
 
         # CONSTRAINT #16
-        # defining b_pj
+        # defining b_pj (if flexible, choose if it will be filmed during the day or night)
         for p in location_list:
             for j in range(max_days):
                 # if both day and night -> b_pj = 1
@@ -339,16 +360,16 @@ def solve_schedule(
         #  ------
 
         solver = cp_model.CpSolver()
-        solver.parameters.max_time_in_seconds = solve_time
-        solver.parameters.num_search_workers = 1
-        solver.parameters.relative_gap_limit = 0.01
-        solver.parameters.random_seed = 42
+        solver.parameters.max_time_in_seconds = solve_time # stop solving after a given time
+        solver.parameters.num_search_workers = 1           # one CPU thread for determinism + reproducibility
+        solver.parameters.relative_gap_limit = 0.01        # stop when solution is within !% of proven optimum
+        solver.parameters.random_seed = 42                 # makes solver behaviour repeatable
         status = solver.Solve(model)
 
         return {
             "status": status,
             "solver": solver,
-            "x": x,
+            "x": x,              # tells you which scenes got assigned to what days
             "y": y,
             "max_days": max_days
         }
@@ -429,6 +450,7 @@ def optimize():
 
         PHASE1_MAX_DAYS = 30
         
+        # calls references to all arguements from previous to construct the model
         result_phase1 = solve_schedule(
             scenes,
             actors,
@@ -446,15 +468,16 @@ def optimize():
             LIGHT_WEIGHT,
             MAX_LOCATIONS,
             PHASE1_MAX_DAYS,
-            objective_mode="min_days",
+            objective_mode="min_days", # temporary objective to minimise the days (this is done to reduce massive combinatorial complexities)
             solve_time=60
         )
 
+        # if solver fails, stop API request
         if result_phase1["status"] not in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
             return jsonify({"error": "No feasible solution found"}), 500
-
+        # sets the min feasible filming days
         D_min = sum(
-            result_phase1["solver"].Value(result_phase1["y"][j])
+            result_phase1["solver"].Value(result_phase1["y"][j])   # retrieves solver object and queries assigned solution value
             for j in range(PHASE1_MAX_DAYS)
         )
 
@@ -464,9 +487,10 @@ def optimize():
             if 1 <= d <= PHASE1_MAX_DAYS
         ]
 
-        best_result = None
-        best_cost = float("inf")
+        best_result = None # no candidate yet
+        best_cost = float("inf") # guaranteed worse than any real cost
 
+        # solve multiple optimisation models 
         for d in candidate_days:
             candidate = solve_schedule(
                 scenes,
@@ -485,17 +509,18 @@ def optimize():
                 LIGHT_WEIGHT,
                 MAX_LOCATIONS,
                 d,
-                objective_mode="cost",
+                objective_mode="cost", # objective goes back to min costs
                 exact_days=d,
                 solve_time=45
             )
 
-            # skip infeasible (e.g. d < D_min will likely be infeasible)
+            # skip infeasible 
             if candidate["status"] not in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
                 continue
 
             candidate_cost = candidate["solver"].ObjectiveValue()
 
+            # keeps cheapest candidate so far
             if candidate_cost < best_cost:
                 best_cost = candidate_cost
                 best_result = candidate
@@ -509,11 +534,13 @@ def optimize():
         #  OUTPUT
         #  ------
 
+        # pull stored objects from result dictionaries (solve_schedule)
         solver = result["solver"]
         x = result["x"]
         y = result["y"]
         max_days = result["max_days"]
 
+        # count how many active filming days in final chosen solution
         final_days = sum(
             solver.Value(y[j])
             for j in range(max_days)
@@ -523,7 +550,7 @@ def optimize():
 
         for j in range(max_days):
 
-            # only process active filming days
+            # only process active filming days (if scene i belongs to day j)
             if solver.Value(y[j]) == 1:
                 
                 day_scenes = []
