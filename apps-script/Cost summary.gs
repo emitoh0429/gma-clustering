@@ -2,16 +2,6 @@
 // COSTSUMMARY.GS
 // CLUSTERING_OUTPUT + FEES → SPECIALIZED_COSTS
 // Dynamic number of days + Specialized Staff + Fixed Staff
-// DOES NOT WRITE OR EDIT CLEANED FOR COSTS
-// DOES NOT WRITE ANY RIGHT-SIDE BREAKDOWN
-//
-// FIXED VERSION:
-// - Finds the actual CLUSTERING_OUTPUT header row instead of assuming Row 1
-// - Ignores warning/message rows above the schedule
-// - Counts actual DAY rows only
-// - Prevents duplicate DAY counting
-// - Fixed Staff = unchecked/blank in "Only in Specific Days?"
-// - Specialized Staff = checked/specific staff appearing in CLUSTERING_OUTPUT
 // ======================================================
 
 function createCostSummary() {
